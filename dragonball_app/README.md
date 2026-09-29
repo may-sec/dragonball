@@ -33,6 +33,12 @@ lib/
             ├── controllers/
             └── views/
 
+    
+    main> AndroidManifest.xml
+    <!-- ADD THIS LINE: Required for HTTP/HTTPS calls in release APK -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+
 
 flutter build web --release --no-wasm-dry-run --dart-define-from-file=.env && \
 

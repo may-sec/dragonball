@@ -12,7 +12,17 @@ final class DragonBallRepository {
   final http.Client _client;
   const DragonBallRepository(this._client);
 
-  Future<Result<PaginatedList<CharacterSummary>, Failure>> fetchCharacters({
+  // Route 1: Browse & Filter Characters
+  // Fetches a paginated or filtered list of characters from the backend.
+  // Parameters:
+  // - `page`: Target page number for pagination (defaults to 1).
+  // - `limit`: Number of items requested per page (defaults to 10).
+  // - `name`: Optional search substring to filter by character name.
+  // - `gender`: Optional gender filter ('Male', 'Female', 'Unknown', or 'ALL').
+  // - `race`: Optional race filter ('Saiyan', 'Human', etc., or 'ALL').
+  // - `affiliation`: Optional faction filter ('Z Fighter', etc., or 'ALL').
+
+  Future<Result<Page<Character>, Failure>> fetchCharacters({
     int page = 1,
     int limit = 10,
     String? name,
@@ -41,14 +51,22 @@ final class DragonBallRepository {
 
     final uri = ApiEndpoints.characters(queryParams);
 
+  // Dispatches the network call and parses through the polymorphic response handler.
     return _fetchFlexibleList(
       uri: uri,
       currentPage: page,
-      parser: (json) => CharacterSummary.fromJson(json),
+      parser: (json) => Character.fromJson(json),
     );
   }
 
-  Future<Result<PaginatedList<Planet>, Failure>> fetchPlanets({
+  // Route 3: Browse & Filter Planets
+  // Fetches a paginated or filtered list of planets from the backend.
+  // Parameters:
+  // - `page`: Target page number for pagination (defaults to 1).
+  // - `limit`: Number of items requested per page (defaults to 10).
+  // - `name`: Optional search substring to filter by planet name.
+  // - `isDestroyed`: Optional boolean flag filtering by destruction status (null = all).
+  Future<Result<Page<Planet>, Failure>> fetchPlanets({
     int page = 1,
     int limit = 10,
     String? name,
@@ -75,10 +93,10 @@ final class DragonBallRepository {
     );
   }
 
-  Future<Result<CharacterDetail, Failure>> fetchCharacterDetail(int id) async {
+  Future<Result<CharacterProfile, Failure>> fetchCharacterProfile(int id) async {
     return _fetchSingle(
-      ApiEndpoints.characterDetail(id),
-      (json) => CharacterDetail.fromJson(json),
+      ApiEndpoints.CharacterProfile(id),
+      (json) => CharacterProfile.fromJson(json),
     );
   }
 
@@ -89,10 +107,13 @@ final class DragonBallRepository {
     );
   }
 
+  // Private Helper 1: Polymorphic Flexible List Deserializer
+
   // Polymorphic helper method parsing two distinct API response formats:
   // 1. Flat List: Returned when searching by filter parameters (e.g., `[{...}, {...}]`).
   // 2. Map with Envelope: Returned on paginated browse calls (e.g., `{"items": [...], "meta": {...}}`).
-  Future<Result<PaginatedList<T>, Failure>> _fetchFlexibleList<T>({
+  // Generic parameter `<T>` represents the target entity type (Character or Planet).
+  Future<Result<Page<T>, Failure>> _fetchFlexibleList<T>({
     required Uri uri,
     required int currentPage,
     required T Function(Map<String, dynamic>) parser,
@@ -103,12 +124,17 @@ final class DragonBallRepository {
         return Err(ServerFailure('Server returned rejection', response.statusCode));
       }
 
+      // Deserializes the raw response body string into dynamic Dart data structures.
       final decoded = jsonDecode(response.body);
+
+      // Branch 1: The response is a flat JSON Array (typical when filters are applied).
 
       if (decoded is List) {
         return Ok(
-          PaginatedList<T>(
+          Page<T>(
+            // Maps each item in the raw array through the provided parser closure.
             items: decoded.map((item) => parser(item as Map<String, dynamic>)).toList(),
+            // When filtering, the API returns all matching results in a single flat list.
             currentPage: 1,
             totalPages: 1,
             hasNext: false,
@@ -116,13 +142,15 @@ final class DragonBallRepository {
         );
       }
 
+      // Branch 2: The response is an enveloped JSON Object (standard paginated response).
       if (decoded is Map<String, dynamic>) {
         final rawItems = decoded['items'] as List<dynamic>? ?? [];
         final meta = decoded['meta'] as Map<String, dynamic>? ?? {};
         final links = decoded['links'] as Map<String, dynamic>? ?? {};
 
         return Ok(
-          PaginatedList<T>(
+          Page<T>(
+            // Maps each dynamic entry in rawItems into the typed domain entity.
             items: rawItems.map((e) => parser(e as Map<String, dynamic>)).toList(),
             currentPage: meta['currentPage'] as int? ?? currentPage,
             totalPages: meta['totalPages'] as int? ?? 1,
@@ -131,14 +159,20 @@ final class DragonBallRepository {
         );
       }
 
+      // Fallback if the returned JSON is neither a List nor a Map.
       return const Err(ParseFailure('Unexpected response shape received from API'));
     } on SocketException {
+      // Intercepts transport-level connectivity errors (offline, DNS failures, connection drops).
       return const Err(NetworkFailure('No active internet connection.'));
     } catch (e) {
+      // Intercepts JSON parsing or type-casting exceptions.
       return Err(ParseFailure('Error processing response: $e'));
     }
   }
 
+  // Private Helper 2: Single Entity Deserializer
+  // Generic private helper for retrieving and parsing a single entity by URI.
+  // Parameter `<T>` represents the target entity type (e.g., CharacterProfile or Planet).
   Future<Result<T, Failure>> _fetchSingle<T>(
     Uri uri,
     T Function(Map<String, dynamic>) parser,

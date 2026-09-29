@@ -13,9 +13,14 @@ class DragonBallHomeScreen extends ConsumerStatefulWidget {
 }
 
 class _DragonBallHomeScreenState extends ConsumerState<DragonBallHomeScreen> {
+  // Tracks active tab index: 0 = Characters View, 1 = Planets View.
   int _currentTabIndex = 0;
+
+  // Scroll controllers tracking list offsets for infinite scroll triggers.
   late final ScrollController _charactersScrollController;
   late final ScrollController _planetsScrollController;
+
+  // Text controllers capturing typed search queries for both domains.
   late final TextEditingController _charSearchController;
   late final TextEditingController _planetSearchController;
 
@@ -32,12 +37,16 @@ class _DragonBallHomeScreenState extends ConsumerState<DragonBallHomeScreen> {
   @override
   void initState() {
     super.initState();
+    // Instantiate text editing controllers for search bars.
     _charSearchController = TextEditingController();
     _planetSearchController = TextEditingController();
+    
+    // Attach listeners to detect when the user scrolls near the bottom of either list.
     _charactersScrollController = ScrollController()..addListener(_onCharactersScroll);
     _planetsScrollController = ScrollController()..addListener(_onPlanetsScroll);
   }
 
+  // Listener triggering next character page when user scrolls within 200px of max extent.
   void _onCharactersScroll() {
     if (_charactersScrollController.position.pixels >=
         _charactersScrollController.position.maxScrollExtent - 200) {
@@ -45,6 +54,7 @@ class _DragonBallHomeScreenState extends ConsumerState<DragonBallHomeScreen> {
     }
   }
 
+  // Listener triggering next planet page when user scrolls within 200px of max extent.
   void _onPlanetsScroll() {
     if (_planetsScrollController.position.pixels >=
         _planetsScrollController.position.maxScrollExtent - 200) {
@@ -288,7 +298,7 @@ class _DragonBallHomeScreenState extends ConsumerState<DragonBallHomeScreen> {
                                     Navigator.push(
                                       context,
                                       MaterialPageRoute(
-                                        builder: (_) => CharacterDetailView(characterId: character.id),
+                                        builder: (_) => CharacterProfileView(characterId: character.id),
                                       ),
                                     );
                                   },

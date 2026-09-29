@@ -12,6 +12,15 @@ sealed class Failure {
   const Failure(this.message);
 }
 
+
+// switch (failure) {
+//   case NetworkFailure(): // Handled
+//   case ServerFailure():  // Handled
+//   case ParseFailure():   // Handled
+// }
+// No `default:` case needed; compiler enforces full coverage.
+
+
 // 'final class' (Dart 3 feature):
 // Ensures this class cannot be extended, implemented, or mixed in by any other class (even inside this file).
 // It locks down the implementation entirely so the design remains immutable and predictable.
@@ -24,6 +33,8 @@ final class ServerFailure extends Failure{
   const ServerFailure(super.message, [this.statusCode]); //Optional Positional Parameters
 }
 
+// Represents serialization, deserialization, JSON format mismatch,
+// or schema casting failures.
 final class ParseFailure extends Failure{
   const ParseFailure(super.message);
 }

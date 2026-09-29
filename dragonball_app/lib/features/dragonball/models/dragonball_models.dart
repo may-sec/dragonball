@@ -2,6 +2,7 @@
 import 'package:meta/meta.dart';
 
 @immutable
+// 'final class' locks this class from being extended or implemented outside this library.
 final class Transformation {
   final int id;
   final String name;
@@ -15,6 +16,8 @@ final class Transformation {
     required this.imageUrl,
   });
 
+  // Factory constructor for parsing a raw JSON Map into a typed Transformation instance.
+  // Applies defensive null-coalescing fallbacks to eliminate runtime null-pointer crashes.
   factory Transformation.fromJson(Map<String, dynamic> json) {
     return Transformation(
       id: json['id'] as int? ?? 0,
@@ -32,7 +35,7 @@ final class Planet {
   final bool isDestroyed;
   final String description;
   final String imageUrl;
-  final List<CharacterSummary> characters;
+  final List<Character> characters;
 
   const Planet({
     required this.id,
@@ -51,15 +54,17 @@ final class Planet {
       isDestroyed: json['isDestroyed'] as bool? ?? false,
       description: json['description'] as String? ?? '',
       imageUrl: json['image'] as String? ?? '',
+      // Iterates through every element in the dynamic array, casts to Map,
+      // and transforms each child item into a Character model.
       characters: rawCharacters
-          .map((c) => CharacterSummary.fromJson(c as Map<String, dynamic>))
+          .map((c) => Character.fromJson(c as Map<String, dynamic>))
           .toList(),
     );
   }
 }
 
 @immutable
-final class CharacterSummary {
+final class Character {
   final int id;
   final String name;
   final String ki;
@@ -70,7 +75,7 @@ final class CharacterSummary {
   final String imageUrl;
   final String affiliation;
 
-  const CharacterSummary({
+  const Character({
     required this.id,
     required this.name,
     required this.ki,
@@ -82,8 +87,8 @@ final class CharacterSummary {
     required this.affiliation,
   });
 
-  factory CharacterSummary.fromJson(Map<String, dynamic> json) {
-    return CharacterSummary(
+  factory Character.fromJson(Map<String, dynamic> json) {
+    return Character(
       id: json['id'] as int? ?? 0,
       name: json['name'] as String? ?? 'Unknown',
       ki: json['ki'] as String? ?? '0',
@@ -98,7 +103,7 @@ final class CharacterSummary {
 }
 
 @immutable
-final class CharacterDetail {
+final class CharacterProfile {
   final int id;
   final String name;
   final String ki;
@@ -111,7 +116,7 @@ final class CharacterDetail {
   final Planet? originPlanet;
   final List<Transformation> transformations;
 
-  const CharacterDetail({
+  const CharacterProfile({
     required this.id,
     required this.name,
     required this.ki,
@@ -125,11 +130,14 @@ final class CharacterDetail {
     this.transformations = const [],
   });
 
-  factory CharacterDetail.fromJson(Map<String, dynamic> json) {
+  factory CharacterProfile.fromJson(Map<String, dynamic> json) {
+    // Safely reads raw dynamic list from JSON key 'transformations', defaulting to empty list.
     final rawTransformations = json['transformations'] as List<dynamic>? ?? [];
+
+    // Safely extracts nested JSON map for 'originPlanet' (null if key does not exist or is null).
     final rawPlanet = json['originPlanet'] as Map<String, dynamic>?;
 
-    return CharacterDetail(
+    return CharacterProfile(
       id: json['id'] as int? ?? 0,
       name: json['name'] as String? ?? 'Unknown',
       ki: json['ki'] as String? ?? '0',
@@ -139,7 +147,9 @@ final class CharacterDetail {
       description: json['description'] as String? ?? '',
       imageUrl: json['image'] as String? ?? '',
       affiliation: json['affiliation'] as String? ?? 'None',
+      // Conditionally instantiates a nested Planet entity only if rawPlanet map is non-null.
       originPlanet: rawPlanet != null ? Planet.fromJson(rawPlanet) : null,
+      // Deserializes each raw transformation entry into a typed Transformation instance.
       transformations: rawTransformations
           .map((t) => Transformation.fromJson(t as Map<String, dynamic>))
           .toList(),

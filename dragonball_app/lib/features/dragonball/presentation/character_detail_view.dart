@@ -4,14 +4,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'dragonball_notifier.dart';
 
-class CharacterDetailView extends ConsumerWidget {
+class CharacterProfileView extends ConsumerWidget {
   final int characterId;
 
-  const CharacterDetailView({super.key, required this.characterId});
+  const CharacterProfileView({super.key, required this.characterId});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final detailAsync = ref.watch(characterDetailProvider(characterId));
+    final detailAsync = ref.watch(CharacterProfileProvider(characterId));
 
     return Scaffold(
       appBar: AppBar(title: const Text('Character File')),

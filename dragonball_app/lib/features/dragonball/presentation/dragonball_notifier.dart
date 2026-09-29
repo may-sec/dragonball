@@ -7,12 +7,18 @@ import '../data/dragonball_repository.dart';
 import '../models/dragonball_models.dart';
 import '../models/paginated_response.dart';
 
+// Global provider exposing the DragonBallRepository instance.
+// Instantiates an http.Client and registers an onDispose hook to properly close
+// the client connection when the provider is destroyed, preventing resource leaks.
 final dbRepositoryProvider = Provider<DragonBallRepository>((ref) {
   final client = http.Client();
   ref.onDispose(client.close);
   return DragonBallRepository(client);
 });
 
+
+// Primary NotifierProvider binding DragonBallNotifier to DragonBallState.
+// Uses Dart constructor tear-off (`DragonBallNotifier.new`) for initialization.
 final dragonBallNotifierProvider =
     NotifierProvider<DragonBallNotifier, DragonBallState>(
   DragonBallNotifier.new,
@@ -23,7 +29,7 @@ final class DragonBallState {
   final String? errorMessage;
 
   // Characters
-  final List<CharacterSummary> characters;
+  final List<Character> characters;
   final int characterCurrentPage;
   final bool hasNextCharacters;
   final bool isLoadingMoreCharacters;
@@ -94,7 +100,7 @@ final class DragonBallState {
   DragonBallState copyWith({
     bool? isLoading,
     String? errorMessage,
-    List<CharacterSummary>? characters,
+    List<Character>? characters,
     int? characterCurrentPage,
     bool? hasNextCharacters,
     bool? isLoadingMoreCharacters,
@@ -131,8 +137,10 @@ final class DragonBallState {
 }
 
 class DragonBallNotifier extends Notifier<DragonBallState> {
+  // Reference to repository injected via ref.watch in build().
   late final DragonBallRepository _repository;
 
+  // Lifecycle build method: called when provider is first initialized.
   @override
   DragonBallState build() {
     _repository = ref.watch(dbRepositoryProvider);
@@ -140,6 +148,7 @@ class DragonBallNotifier extends Notifier<DragonBallState> {
     return DragonBallState.initial();
   }
 
+  // Orchestrates parallel initial fetch of both characters and planets using Dart records.
   Future<void> loadInitial() async {
     state = state.copyWith(isLoading: true, errorMessage: null);
 
@@ -153,10 +162,10 @@ class DragonBallNotifier extends Notifier<DragonBallState> {
       return;
     }
 
-    final charData = (charResult as Ok<PaginatedList<CharacterSummary>, Failure>).value;
+    final charData = (charResult as Ok<Page<Character>, Failure>).value;
     final planetData = switch (planetResult) {
       Ok(:final value) => value,
-      Err() => PaginatedList<Planet>.empty(),
+      Err() => Page<Planet>.empty(),
     };
 
     state = state.copyWith(
@@ -302,10 +311,10 @@ class DragonBallNotifier extends Notifier<DragonBallState> {
   }
 }
 
-final characterDetailProvider =
-    FutureProvider.family<CharacterDetail, int>((ref, id) async {
+final CharacterProfileProvider =
+    FutureProvider.family<CharacterProfile, int>((ref, id) async {
   final repo = ref.watch(dbRepositoryProvider);
-  final result = await repo.fetchCharacterDetail(id);
+  final result = await repo.fetchCharacterProfile(id);
   return switch (result) {
     Ok(:final value) => value,
     Err(:final failure) => throw Exception(failure.message),
