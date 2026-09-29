@@ -1,7 +1,5 @@
 package com.maydevs.dragonball.exception;
 
-import com.maydevs.dragonball.exception.ErrorResponse;
-import com.maydevs.dragonball.exception.ResourceNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
