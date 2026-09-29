@@ -7,17 +7,19 @@ FROM eclipse-temurin:21-jdk-alpine AS build
 
 WORKDIR /app
 
+# Copy Maven wrapper and POM configuration
 COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
 RUN chmod +x mvnw
 
-# Pre-fetch project dependencies and build plugins
+# Pre-fetch project dependencies and plugins using build cache
 RUN --mount=type=cache,id=maven-repo,target=/root/.m2 \
     ./mvnw dependency:resolve dependency:resolve-plugins -B
 
+# Copy project source code
 COPY src/ ./src/
 
-# Package without wiping cached dependencies
+# Package executable JAR using cached .m2 directory
 RUN --mount=type=cache,id=maven-repo,target=/root/.m2 \
     ./mvnw package -DskipTests -B
 
@@ -28,23 +30,23 @@ FROM eclipse-temurin:21-jre-alpine AS runtime
 
 WORKDIR /app
 
-ENV SPRING_PROFILES_ACTIVE=prod
-ENV PORT=8080
+ENV SPRING_PROFILES_ACTIVE=prod \
+    PORT=8080 \
+    JAVA_TOOL_OPTIONS="-XX:+ExitOnOutOfMemoryError -XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom"
 
-# Create non-root user group
+# Create dedicated non-root user and group
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
-# COPY FIRST as root so permissions are guaranteed, then assign ownership
-COPY --from=build /app/target/*.jar app.jar
-RUN chown appuser:appgroup app.jar
+# Copy JAR directly with correct user ownership in a single layer
+COPY --from=build --chown=appuser:appgroup /app/target/*.jar app.jar
 
-# Now switch to non-root user
+# Drop root privileges
 USER appuser:appgroup
 
 EXPOSE ${PORT}
 
-# Native healthcheck using dynamic ${PORT}
-HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:${PORT}/api/v1/entries?size=1 || exit 1
+# Healthcheck aligned with Spring Actuator or Dragon Ball character browse endpoint
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:${PORT}/actuator/health || exit 1
 
-ENTRYPOINT ["java", "-XX:+ExitOnOutOfMemoryError", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-jar", "app.jar"]
