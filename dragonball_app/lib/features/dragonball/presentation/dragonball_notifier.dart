@@ -1,12 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
-
+import 'package:flutter/foundation.dart' show debugPrint;
 import '../../../core/errors/failure.dart';
 import '../../../core/result/result.dart';
 import '../data/dragonball_repository.dart';
 import '../models/dragonball_models.dart';
 import '../models/paginated_response.dart';
 import 'dragonball_state.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 final dragonBallRepositoryProvider =
     Provider<DragonBallRepository>((ref) {
@@ -112,10 +113,68 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
     DragonBallState Function(DragonBallState current) transform,
   ) {
     final current = _current;
+
     if (current != null) {
       state = AsyncData(transform(current));
     }
   }
+
+  Future<void> _runCharacterRequest({
+    required int sequence,
+    required bool replace,
+    required Future<Result<Page<Character>, Failure>> Function() request,
+  }) async {
+    try {
+      final result = await request();
+
+      // Only the latest character request owns the current state.
+      if (sequence != _characterRequestSequence) return;
+
+      _applyCharacterPage(
+        result,
+        replace: replace,
+      );
+    } catch (error) {
+      if (sequence != _characterRequestSequence) return;
+
+      _update(
+        (s) => s.copyWith(
+          isLoadingCharacters: false,
+          isLoadingMoreCharacters: false,
+          characterError: error.toString(),
+        ),
+      );
+    }
+  }
+
+  Future<void> _runPlanetRequest({
+  required int sequence,
+  required bool replace,
+  required Future<Result<Page<Planet>, Failure>> Function() request,
+}) async {
+  try {
+    final result = await request();
+
+    // Only the latest planet request owns the current state.
+    if (sequence != _planetRequestSequence) return;
+
+    _applyPlanetPage(
+      result,
+      replace: replace,
+    );
+  } catch (error) {
+    if (sequence != _planetRequestSequence) return;
+
+    _update(
+      (s) => s.copyWith(
+        isLoadingPlanets: false,
+        isLoadingMorePlanets: false,
+        planetError: error.toString(),
+      ),
+    );
+  }
+}
+
 
   Future<void> refresh() async {
     final current = _current;
@@ -125,6 +184,7 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
       return;
     }
 
+    // A refresh supersedes any in-flight request for each catalogue.
     final characterSequence = ++_characterRequestSequence;
     final planetSequence = ++_planetRequestSequence;
 
@@ -132,41 +192,37 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
       (s) => s.copyWith(
         isLoadingCharacters: true,
         isLoadingPlanets: true,
+        isLoadingMoreCharacters: false,
+        isLoadingMorePlanets: false,
         characterError: null,
         planetError: null,
       ),
     );
 
-    final results = await Future.wait<Object>([
-      _repository.fetchCharacters(
-        page: 1,
-        limit: 10,
-        name: current.searchName,
-        gender: current.selectedGender,
-        race: current.selectedRace,
-        affiliation: current.selectedAffiliation,
+    await Future.wait<void>([
+      _runCharacterRequest(
+        sequence: characterSequence,
+        replace: true,
+        request: () => _repository.fetchCharacters(
+          page: 1,
+          limit: 10,
+          name: current.searchName,
+          gender: current.selectedGender,
+          race: current.selectedRace,
+          affiliation: current.selectedAffiliation,
+        ),
       ),
-      _repository.fetchPlanets(
-        page: 1,
-        limit: 10,
-        name: current.planetSearchName,
-        isDestroyed: current.isDestroyedFilter,
+      _runPlanetRequest(
+        sequence: planetSequence,
+        replace: true,
+        request: () => _repository.fetchPlanets(
+          page: 1,
+          limit: 10,
+          name: current.planetSearchName,
+          isDestroyed: current.isDestroyedFilter,
+        ),
       ),
     ]);
-
-    if (characterSequence == _characterRequestSequence) {
-      _applyCharacterPage(
-        results[0] as Result<Page<Character>, Failure>,
-        replace: true,
-      );
-    }
-
-    if (planetSequence == _planetRequestSequence) {
-      _applyPlanetPage(
-        results[1] as Result<Page<Planet>, Failure>,
-        replace: true,
-      );
-    }
   }
 
   Future<void> applyCharacterFilters({
@@ -188,23 +244,24 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
       characterError: null,
     );
 
-    _update((_) => next);
-
+    // Increment before starting the request. This invalidates older
+    // searches, refreshes, and pagination requests for characters.
     final sequence = ++_characterRequestSequence;
 
-    final result = await _repository.fetchCharacters(
-      page: 1,
-      limit: 10,
-      name: next.searchName,
-      gender: next.selectedGender,
-      race: next.selectedRace,
-      affiliation: next.selectedAffiliation,
+    _update((_) => next);
+
+    await _runCharacterRequest(
+      sequence: sequence,
+      replace: true,
+      request: () => _repository.fetchCharacters(
+        page: 1,
+        limit: 10,
+        name: next.searchName,
+        gender: next.selectedGender,
+        race: next.selectedRace,
+        affiliation: next.selectedAffiliation,
+      ),
     );
-
-    // Ignore a response if a newer search/filter has started.
-    if (sequence != _characterRequestSequence) return;
-
-    _applyCharacterPage(result, replace: true);
   }
 
   Future<void> applyPlanetFilters({
@@ -225,20 +282,20 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
       planetError: null,
     );
 
-    _update((_) => next);
-
     final sequence = ++_planetRequestSequence;
 
-    final result = await _repository.fetchPlanets(
-      page: 1,
-      limit: 10,
-      name: next.planetSearchName,
-      isDestroyed: next.isDestroyedFilter,
+    _update((_) => next);
+
+    await _runPlanetRequest(
+      sequence: sequence,
+      replace: true,
+      request: () => _repository.fetchPlanets(
+        page: 1,
+        limit: 10,
+        name: next.planetSearchName,
+        isDestroyed: next.isDestroyedFilter,
+      ),
     );
-
-    if (sequence != _planetRequestSequence) return;
-
-    _applyPlanetPage(result, replace: true);
   }
 
   void _applyCharacterPage(
@@ -305,12 +362,13 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
     final current = _current;
 
     if (current == null ||
-        current.hasActiveCharacterFilters ||
         !current.hasNextCharacters ||
         current.isLoadingCharacters ||
         current.isLoadingMoreCharacters) {
       return;
     }
+
+    final sequence = ++_characterRequestSequence;
 
     _update(
       (s) => s.copyWith(
@@ -319,28 +377,31 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
       ),
     );
 
-    final sequence = ++_characterRequestSequence;
-
-    final result = await _repository.fetchCharacters(
-      page: current.characterCurrentPage + 1,
-      limit: 10,
+    await _runCharacterRequest(
+      sequence: sequence,
+      replace: false,
+      request: () => _repository.fetchCharacters(
+        page: current.characterCurrentPage + 1,
+        limit: 10,
+        name: current.searchName,
+        gender: current.selectedGender,
+        race: current.selectedRace,
+        affiliation: current.selectedAffiliation,
+      ),
     );
-
-    if (sequence != _characterRequestSequence) return;
-
-    _applyCharacterPage(result, replace: false);
   }
 
   Future<void> loadNextPlanets() async {
     final current = _current;
 
     if (current == null ||
-        current.hasActivePlanetFilters ||
         !current.hasNextPlanets ||
         current.isLoadingPlanets ||
         current.isLoadingMorePlanets) {
       return;
     }
+
+    final sequence = ++_planetRequestSequence;
 
     _update(
       (s) => s.copyWith(
@@ -349,16 +410,16 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
       ),
     );
 
-    final sequence = ++_planetRequestSequence;
-
-    final result = await _repository.fetchPlanets(
-      page: current.planetCurrentPage + 1,
-      limit: 10,
+    await _runPlanetRequest(
+      sequence: sequence,
+      replace: false,
+      request: () => _repository.fetchPlanets(
+        page: current.planetCurrentPage + 1,
+        limit: 10,
+        name: current.planetSearchName,
+        isDestroyed: current.isDestroyedFilter,
+      ),
     );
-
-    if (sequence != _planetRequestSequence) return;
-
-    _applyPlanetPage(result, replace: false);
   }
 
   void resetCharacterFilters() {
@@ -381,9 +442,71 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
       ref.read(dragonBallRepositoryProvider);
 }
 
+
 class DragonBallFavoritesController extends Notifier<Set<int>> {
+  static const _storageKey = 'dragonball_favorite_character_ids';
+
+  bool _loaded = false;
+  bool _restoreStarted = false;
+
+  // IDs toggled while saved favorites are being restored.
+  // Each ID's presence represents an odd number of toggles.
+  final Set<int> _pendingToggles = {};
+
+  // Serializes persistence writes so an older snapshot cannot
+  // overwrite a newer snapshot after completing out of order.
+  Future<void> _writeQueue = Future<void>.value();
+
   @override
-  Set<int> build() => const <int>{};
+  Set<int> build() {
+    _startRestore();
+    return const <int>{};
+  }
+
+  void _startRestore() {
+    if (_loaded || _restoreStarted) return;
+
+    _restoreStarted = true;
+    _restoreFavorites();
+  }
+
+  Future<void> _restoreFavorites() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      final savedIds = (prefs.getStringList(_storageKey) ?? const <String>[])
+          .map(int.tryParse)
+          .whereType<int>()
+          .toSet();
+
+      final hadPendingToggles = _pendingToggles.isNotEmpty;
+
+      // Merge taps that occurred while storage was loading.
+      // Toggle semantics mean each pending ID must be inverted once.
+      for (final id in _pendingToggles) {
+        if (!savedIds.add(id)) {
+          savedIds.remove(id);
+        }
+      }
+
+      _pendingToggles.clear();
+
+      state = Set<int>.unmodifiable(savedIds);
+      _loaded = true;
+      _restoreStarted = false;
+
+      // No write is needed if restoration did not change anything.
+      // If the user toggled during restoration, persist the merged set.
+      if (hadPendingToggles) {
+        _enqueueSave();
+      }
+    } catch (error) {
+      _restoreStarted = false;
+
+      // Keep pending toggles so a later toggle can retry restoration.
+      debugPrint('Failed to restore Dragon Ball favorites: $error');
+    }
+  }
 
   void toggle(int characterId) {
     final next = Set<int>.of(state);
@@ -392,7 +515,39 @@ class DragonBallFavoritesController extends Notifier<Set<int>> {
       next.remove(characterId);
     }
 
+    // Update the UI immediately; persistence happens asynchronously.
     state = Set<int>.unmodifiable(next);
+
+    if (!_loaded) {
+      if (!_pendingToggles.add(characterId)) {
+        _pendingToggles.remove(characterId);
+      }
+
+      // Retry restoration if a previous attempt failed.
+      _startRestore();
+      return;
+    }
+
+    _enqueueSave();
+  }
+
+  void _enqueueSave() {
+    // Capture this state snapshot now. The queue guarantees snapshots
+    // are written in the same order in which they were enqueued.
+    final ids = state.toList()..sort();
+
+    _writeQueue = _writeQueue.then((_) async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+
+        await prefs.setStringList(
+          _storageKey,
+          ids.map((id) => id.toString()).toList(),
+        );
+      } catch (error) {
+        debugPrint('Failed to save Dragon Ball favorites: $error');
+      }
+    });
   }
 
   bool contains(int characterId) => state.contains(characterId);

@@ -1,3 +1,4 @@
+
 import 'dart:async';
 
 class SearchDebouncer {
@@ -5,11 +6,19 @@ class SearchDebouncer {
 
   void run(Duration delay, void Function() action) {
     _timer?.cancel();
-    _timer = Timer(delay, action);
+
+    _timer = Timer(delay, () {
+      _timer = null;
+      action();
+    });
+  }
+
+  void cancel() {
+    _timer?.cancel();
+    _timer = null;
   }
 
   void dispose() {
-    _timer?.cancel();
-    _timer = null;
+    cancel();
   }
 }

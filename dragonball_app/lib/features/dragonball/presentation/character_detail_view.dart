@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'planet_detail_view.dart';
 import 'dragonball_notifier.dart';
 import '../models/dragonball_models.dart';
+import 'catalog_components.dart';
 
 class CharacterProfileView extends ConsumerWidget {
   const CharacterProfileView({
@@ -55,26 +56,49 @@ class CharacterProfileView extends ConsumerWidget {
               Container(
                 height: 280,
                 width: double.infinity,
-                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.surfaceContainer,
                   borderRadius: BorderRadius.circular(24),
                 ),
-                child: Hero(
-                  tag: 'character-${character.id}',
-                  child: CachedNetworkImage(
-                    imageUrl: character.imageUrl,
-                    fit: BoxFit.contain,
-                    placeholder: (_, __) => const Center(
-                      child: CircularProgressIndicator(),
+                clipBehavior: Clip.antiAlias,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Hero(
+                        tag: 'character-${character.id}',
+                        child: CachedNetworkImage(
+                          imageUrl: character.imageUrl,
+                          fit: BoxFit.contain,
+                          placeholder: (_, __) => const Center(
+                            child: CircularProgressIndicator(),
+                          ),
+                          errorWidget: (_, __, ___) => const Icon(
+                            Icons.person,
+                            size: 80,
+                          ),
+                        ),
+                      ),
                     ),
-                    errorWidget: (_, __, ___) => const Icon(
-                      Icons.person,
-                      size: 80,
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: Material(
+                        color: Theme.of(context).colorScheme.surface.withValues(
+                              alpha: 0.92,
+                            ),
+                        shape: const CircleBorder(),
+                        elevation: 2,
+                        child: FavoriteToggleButton(
+                          characterId: character.id,
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
               ),
+
               const SizedBox(height: 20),
               Text(
                 character.name,
@@ -172,82 +196,9 @@ class CharacterProfileView extends ConsumerWidget {
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: 12),
-                Stack(
-                  children: [
-                    SizedBox(
-                      height: 260,
-                      width: double.infinity,
-                      child: PageView.builder(
-                        itemCount: character.transformations.length,
-                        itemBuilder: (context, index) {
-                          final transformation = character.transformations[index];
-
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 6),
-                            child: Card(
-                              clipBehavior: Clip.antiAlias,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  Expanded(
-                                    child: CachedNetworkImage(
-                                      imageUrl: transformation.imageUrl,
-                                      width: double.infinity,
-                                      fit: BoxFit.contain,
-                                      placeholder: (context, url) => const Center(
-                                        child: CircularProgressIndicator(),
-                                      ),
-                                      errorWidget: (context, url, error) =>
-                                          const Center(
-                                        child: Icon(
-                                          Icons.broken_image_outlined,
-                                          size: 40,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  Padding(
-                                    padding: const EdgeInsets.all(12),
-                                    child: Text(
-                                      transformation.name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: Theme.of(context).textTheme.titleMedium,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-
-                    // Full-screen button in the bottom-right corner.
-                    Positioned(
-                      right: 14,
-                      bottom: 14,
-                      child: IconButton.filled(
-                        tooltip: 'Open full-screen gallery',
-                        style: IconButton.styleFrom(
-                          backgroundColor: Theme.of(context).colorScheme.primary,
-                          foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                        ),
-                        icon: const Icon(Icons.fullscreen_rounded),
-                        onPressed: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) => TransformationGalleryScreen(
-                                transformations: character.transformations,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
+                _TransformationCarousel(
+                  transformations: character.transformations,
                 ),
-
               ],
             ],
           ),
@@ -256,6 +207,168 @@ class CharacterProfileView extends ConsumerWidget {
     );
   }
 }
+
+
+class _TransformationCarousel extends StatefulWidget {
+  const _TransformationCarousel({
+    required this.transformations,
+  });
+
+  final List<Transformation> transformations;
+
+  @override
+  State<_TransformationCarousel> createState() =>
+      _TransformationCarouselState();
+}
+
+class _TransformationCarouselState
+    extends State<_TransformationCarousel> {
+  late final PageController _controller;
+  int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+
+    final count = widget.transformations.length;
+
+    // Start far into the repeated page sequence so either direction
+    // has plenty of room to scroll.
+    _controller = PageController(
+      initialPage: count > 0 ? count * 1000 : 0,
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final transformations = widget.transformations;
+    final count = transformations.length;
+
+    if (count == 0) {
+      return const SizedBox.shrink();
+    }
+
+    return SizedBox(
+      height: 260,
+      child: PageView.builder(
+        controller: _controller,
+        // A null itemCount allows continuous scrolling.
+        itemBuilder: (context, pageIndex) {
+          final index = pageIndex % count;
+          final transformation = transformations[index];
+
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Card(
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Material(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainer,
+                          child: InkWell(
+                            onTap: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) =>
+                                      TransformationGalleryScreen(
+                                    transformations: transformations,
+                                    initialIndex: index,
+                                  ),
+                                ),
+                              );
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.all(8),
+                              child: CachedNetworkImage(
+                                imageUrl: transformation.imageUrl,
+                                fit: BoxFit.contain,
+                                placeholder: (_, __) =>
+                                    const Center(
+                                  child: CircularProgressIndicator(),
+                                ),
+                                errorWidget: (_, __, ___) =>
+                                    const Center(
+                                  child: Icon(
+                                    Icons.broken_image_outlined,
+                                    size: 40,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: IgnorePointer(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .primaryContainer,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                child: Text(
+                                  '${index + 1} / $count',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelLarge
+                                      ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onPrimaryContainer,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(
+                      transformation.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+        onPageChanged: (pageIndex) {
+          setState(() {
+            _currentIndex = pageIndex % count;
+          });
+        },
+      ),
+    );
+  }
+}
+
 
 
 class TransformationGalleryScreen extends StatefulWidget {
@@ -282,10 +395,16 @@ class _TransformationGalleryScreenState
   void initState() {
     super.initState();
 
-    _currentIndex = widget.initialIndex;
+    final count = widget.transformations.length;
+
+    final safeIndex = count == 0
+        ? 0
+        : widget.initialIndex.clamp(0, count - 1);
+
+    _currentIndex = safeIndex;
 
     _pageController = PageController(
-      initialPage: widget.initialIndex,
+      initialPage: count > 0 ? count * 1000 + safeIndex : 0,
     );
   }
 
@@ -315,7 +434,8 @@ class _TransformationGalleryScreenState
       );
     }
 
-    final transformation = widget.transformations[_currentIndex];
+    final count = widget.transformations.length;
+    final transformation = widget.transformations[_currentIndex % count];
 
     return Scaffold(
       backgroundColor: const Color(0xFF090B12),
@@ -336,7 +456,7 @@ class _TransformationGalleryScreenState
                     icon: const Icon(Icons.close_rounded),
                   ),
                   Text(
-                    '${_currentIndex + 1} / ${widget.transformations.length}',
+                    '${_currentIndex + 1} / $count',
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w600,
@@ -348,12 +468,14 @@ class _TransformationGalleryScreenState
             Expanded(
               child: PageView.builder(
                 controller: _pageController,
-                itemCount: widget.transformations.length,
+                itemCount: null,
                 onPageChanged: (index) {
-                  setState(() => _currentIndex = index);
+                  setState(() {
+                    _currentIndex = index % count;
+                  });
                 },
                 itemBuilder: (context, index) {
-                  final item = widget.transformations[index];
+                  final item = widget.transformations[index % count];
 
                   return Padding(
                     padding: const EdgeInsets.all(20),
@@ -414,12 +536,10 @@ class _TransformationGalleryScreenState
                     children: [
                       IconButton.filledTonal(
                         tooltip: 'Previous transformation',
-                        onPressed: _currentIndex > 0
-                            ? () => _pageController.previousPage(
-                                  duration: const Duration(milliseconds: 300),
-                                  curve: Curves.easeOutCubic,
-                                )
-                            : null,
+                        onPressed: () => _pageController.previousPage(
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeOutCubic,
+                        ),
                         icon: const Icon(Icons.chevron_left_rounded),
                       ),
                       Expanded(
@@ -434,13 +554,10 @@ class _TransformationGalleryScreenState
                       ),
                       IconButton.filledTonal(
                         tooltip: 'Next transformation',
-                        onPressed: _currentIndex <
-                                widget.transformations.length - 1
-                            ? () => _pageController.nextPage(
-                                  duration: const Duration(milliseconds: 300),
-                                  curve: Curves.easeOutCubic,
-                                )
-                            : null,
+                        onPressed: () => _pageController.nextPage(
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeOutCubic,
+                        ),
                         icon: const Icon(Icons.chevron_right_rounded),
                       ),
                     ],

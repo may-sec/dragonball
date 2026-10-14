@@ -1,15 +1,17 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:dragonball_app/features/dragonball/presentation/character_filter_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/dragonball_models.dart';
+import 'catalog_components.dart';
 import 'character_detail_view.dart';
 import 'dragonball_notifier.dart';
 import 'dragonball_state.dart';
 import 'planet_detail_view.dart';
 import 'search_debouncer.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class DragonBallHomeScreen extends HookConsumerWidget {
   const DragonBallHomeScreen({super.key});
@@ -198,31 +200,40 @@ class DragonBallHomeScreen extends HookConsumerWidget {
 
         if (newState == null) return;
 
+        final messages = <String>[];
+
+        final characterError = newState.characterError;
+        final characterErrorChanged =
+            characterError != null &&
+            characterError != oldState?.characterError;
+
+        if (characterErrorChanged && newState.characters.isNotEmpty) {
+          messages.add('Characters: $characterError');
+        }
+
+        final planetError = newState.planetError;
+        final planetErrorChanged =
+            planetError != null &&
+            planetError != oldState?.planetError;
+
+        if (planetErrorChanged && newState.planets.isNotEmpty) {
+          messages.add('Planets: $planetError');
+        }
+
+        if (messages.isEmpty) return;
+
         final messenger = ScaffoldMessenger.of(context);
 
-        if (newState.characterError != null &&
-            newState.characterError != oldState?.characterError) {
-          messenger
-            ..hideCurrentSnackBar()
-            ..showSnackBar(
-              SnackBar(
-                content: Text('Characters: ${newState.characterError}'),
-              ),
-            );
-        }
-
-        if (newState.planetError != null &&
-            newState.planetError != oldState?.planetError) {
-          messenger
-            ..hideCurrentSnackBar()
-            ..showSnackBar(
-              SnackBar(
-                content: Text('Planets: ${newState.planetError}'),
-              ),
-            );
-        }
+        messenger
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(messages.join('\n')),
+            ),
+          );
       },
     );
+
 
     final catalogAsync = ref.watch(dragonBallControllerProvider);
 
@@ -230,8 +241,6 @@ class DragonBallHomeScreen extends HookConsumerWidget {
     final favoriteCount = ref.watch(
       dragonBallFavoritesProvider.select((ids) => ids.length),
     );
-
-    final favoriteIds = ref.watch(dragonBallFavoritesProvider);
 
     final isCharacterTab = selectedTab.value == 0;
     final isPlanetTab = selectedTab.value == 1;
@@ -347,6 +356,7 @@ class DragonBallHomeScreen extends HookConsumerWidget {
                   context,
                   ref,
                   onResetSearch: () {
+                    characterDebouncer.cancel();
                     characterSearchController.clear();
                     characterQuery.value = '';
                   },
@@ -355,9 +365,12 @@ class DragonBallHomeScreen extends HookConsumerWidget {
               onRetry: () => ref
                   .read(dragonBallControllerProvider.notifier)
                   .applyCharacterFilters(),
+              
               onReset: () {
+                characterDebouncer.cancel();
                 characterSearchController.clear();
                 characterQuery.value = '';
+
                 ref
                     .read(dragonBallControllerProvider.notifier)
                     .resetCharacterFilters();
@@ -396,15 +409,16 @@ class DragonBallHomeScreen extends HookConsumerWidget {
                   .read(dragonBallControllerProvider.notifier)
                   .applyPlanetFilters(),
               onReset: () {
+                planetDebouncer.cancel();
                 planetSearchController.clear();
                 planetQuery.value = '';
+
                 ref
                     .read(dragonBallControllerProvider.notifier)
                     .resetPlanetFilters();
               },
             ),
             _FavoritesTab(
-              favoriteIds: favoriteIds,
               isGridView: favoritesGridView.value,
               onViewChanged: (value) => favoritesGridView.value = value,
               onBrowseCharacters: () {
@@ -417,144 +431,43 @@ class DragonBallHomeScreen extends HookConsumerWidget {
     );
   }
 
+  
+  
   void _showCharacterFilterSheet(
     BuildContext context,
     WidgetRef ref, {
     required VoidCallback onResetSearch,
   }) {
-    showModalBottomSheet<void>(
+    final currentState = ref
+        .read(dragonBallControllerProvider)
+        .asData
+        ?.value;
+
+    if (currentState == null) return;
+
+    final controller =
+        ref.read(dragonBallControllerProvider.notifier);
+
+    showCharacterFilterSheet(
       context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Consumer(
-            builder: (context, ref, _) {
-              final state = ref
-                  .watch(dragonBallControllerProvider)
-                  .asData
-                  ?.value;
-
-              if (state == null) {
-                return const Padding(
-                  padding: EdgeInsets.all(32),
-                  child: Center(child: CircularProgressIndicator()),
-                );
-              }
-
-              final controller =
-                  ref.read(dragonBallControllerProvider.notifier);
-
-              return SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Filter characters',
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: () {
-                            onResetSearch();
-                            controller.resetCharacterFilters();
-                            Navigator.pop(sheetContext);
-                          },
-                          child: const Text('Reset all'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Race',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      children: _races.map((race) {
-                        return ChoiceChip(
-                          label: Text(race),
-                          selected: state.selectedRace == race,
-                          onSelected: (_) {
-                            controller.applyCharacterFilters(race: race);
-                          },
-                        );
-                      }).toList(),
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: DropdownButtonFormField<String>(
-                            initialValue: state.selectedGender,
-                            isExpanded: true,
-                            decoration: const InputDecoration(
-                              labelText: 'Gender',
-                              border: OutlineInputBorder(),
-                            ),
-                            items: _genders.map((gender) {
-                              return DropdownMenuItem(
-                                value: gender,
-                                child: Text(gender),
-                              );
-                            }).toList(),
-                            onChanged: (value) {
-                              if (value != null) {
-                                controller.applyCharacterFilters(
-                                  gender: value,
-                                );
-                              }
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: DropdownButtonFormField<String>(
-                            initialValue: state.selectedAffiliation,
-                            isExpanded: true,
-                            decoration: const InputDecoration(
-                              labelText: 'Affiliation',
-                              border: OutlineInputBorder(),
-                            ),
-                            items: _affiliations.map((affiliation) {
-                              return DropdownMenuItem(
-                                value: affiliation,
-                                child: Text(
-                                  affiliation,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              );
-                            }).toList(),
-                            onChanged: (value) {
-                              if (value != null) {
-                                controller.applyCharacterFilters(
-                                  affiliation: value,
-                                );
-                              }
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: () => Navigator.pop(sheetContext),
-                        child: const Text('Apply and close'),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
+      selectedRace: currentState.selectedRace,
+      selectedGender: currentState.selectedGender,
+      selectedAffiliation: currentState.selectedAffiliation,
+      races: _races,
+      genders: _genders,
+      affiliations: _affiliations,
+      onResetSearch: onResetSearch,
+      onApply: ({
+        required String race,
+        required String gender,
+        required String affiliation,
+        required bool resetSearch,
+      }) {
+        controller.applyCharacterFilters(
+          name: resetSearch ? '' : null,
+          race: race,
+          gender: gender,
+          affiliation: affiliation,
         );
       },
     );
@@ -628,56 +541,34 @@ class _CharacterTab extends StatelessWidget {
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          child: Row(
-            children: [
-              const Text('View'),
-              const SizedBox(width: 12),
-              SegmentedButton<bool>(
-                showSelectedIcon: false,
-                segments: const [
-                  ButtonSegment<bool>(
-                    value: true,
-                    icon: Icon(Icons.grid_view_rounded),
-                    label: Text('Grid'),
-                  ),
-                  ButtonSegment<bool>(
-                    value: false,
-                    icon: Icon(Icons.view_list_rounded),
-                    label: Text('List'),
-                  ),
-                ],
-                selected: {isGridView},
-                onSelectionChanged: (selection) {
-                  onViewChanged(selection.first);
-                },
-              ),
-            ],
-          ),
-        ),
-        if (state.isLoadingCharacters &&
-            state.characters.isNotEmpty)
-          const LinearProgressIndicator(minHeight: 2),
-        if (state.hasActiveCharacterFilters)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: onReset,
-              icon: const Icon(Icons.filter_alt_off),
-              label: const Text('Clear filters'),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        child: Row(
+          children: [
+            ViewModeSelector(
+              isGridView: isGridView,
+              onChanged: onViewChanged,
             ),
-          ),
+            const Spacer(),
+            if (state.hasActiveCharacterFilters)
+              TextButton.icon(
+                onPressed: onReset,
+                icon: const Icon(Icons.filter_alt_off, size: 18),
+                label: const Text('Clear filters'),
+              ),
+          ],
+        ),
+      ),
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
               if (state.isLoadingCharacters &&
                   state.characters.isEmpty) {
-                return isGridView
-                    ? _SkeletonGrid(
-                        columns: _gridColumns(constraints.maxWidth),
-                      )
-                    : const _SkeletonList();
+                return CatalogSkeleton(
+                  isGridView: isGridView,
+                  columns: _gridColumns(constraints.maxWidth),
+                  gridAspectRatio: 0.66,
+                );
               }
 
               if (state.characterError != null &&
@@ -692,55 +583,27 @@ class _CharacterTab extends StatelessWidget {
                 return _EmptyView(
                   icon: Icons.person_search,
                   title: 'No warriors found',
-                  subtitle:
-                      'Try another search or clear your filters.',
-                  onReset: onReset,
+                  subtitle: 'Try another search or clear your filters.',
+                  onAction: onReset,
+                  actionLabel: 'Reset',
                 );
               }
 
               final columns = _gridColumns(constraints.maxWidth);
 
-              return RefreshIndicator(
+              return CatalogResults<Character>(
+                items: state.characters,
+                isGridView: isGridView,
+                columns: columns,
+                gridAspectRatio: 0.66,
+                controller: scrollController,
+                isLoadingMore: state.isLoadingMoreCharacters,
                 onRefresh: onRetry,
-                child: isGridView
-                    ? GridView.builder(
-                        controller: scrollController,
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.all(12),
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: columns,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                          childAspectRatio: 0.66,
-                        ),
-                        itemCount: state.characters.length +
-                            (state.isLoadingMoreCharacters ? columns : 0),
-                        itemBuilder: (context, index) {
-                          if (index >= state.characters.length) {
-                            return const _SkeletonCard();
-                          }
-
-                          return _CharacterTile(
-                            character: state.characters[index],
-                          );
-                        },
-                      )
-                    : ListView.builder(
-                        controller: scrollController,
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.all(12),
-                        itemCount: state.characters.length +
-                            (state.isLoadingMoreCharacters ? 1 : 0),
-                        itemBuilder: (context, index) {
-                          if (index >= state.characters.length) {
-                            return const _LoadingMore();
-                          }
-
-                          return _CharacterListTile(
-                            character: state.characters[index],
-                          );
-                        },
-                      ),
+                itemBuilder: (context, character) {
+                  return isGridView
+                      ? _CharacterTile(character: character)
+                      : _CharacterListTile(character: character);
+                },
               );
             },
           ),
@@ -786,6 +649,7 @@ class _PlanetTab extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
           child: TextField(
             controller: searchController,
+            focusNode: searchFocusNode,
             onChanged: onSearchChanged,
             decoration: InputDecoration(
               hintText: 'Search planets...',
@@ -829,52 +693,30 @@ class _PlanetTab extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
           child: Row(
             children: [
-              const Text('View'),
-              const SizedBox(width: 12),
-              SegmentedButton<bool>(
-                showSelectedIcon: false,
-                segments: const [
-                  ButtonSegment<bool>(
-                    value: true,
-                    icon: Icon(Icons.grid_view_rounded),
-                    label: Text('Grid'),
-                  ),
-                  ButtonSegment<bool>(
-                    value: false,
-                    icon: Icon(Icons.view_list_rounded),
-                    label: Text('List'),
-                  ),
-                ],
-                selected: {isGridView},
-                onSelectionChanged: (selection) {
-                  onViewChanged(selection.first);
-                },
+              ViewModeSelector(
+                isGridView: isGridView,
+                onChanged: onViewChanged,
               ),
+              const Spacer(),
+              if (state.hasActivePlanetFilters)
+                TextButton.icon(
+                  onPressed: onReset,
+                  icon: const Icon(Icons.filter_alt_off, size: 18),
+                  label: const Text('Clear filters'),
+                ),
             ],
           ),
         ),
-        if (state.isLoadingPlanets && state.planets.isNotEmpty)
-          const LinearProgressIndicator(minHeight: 2),
-        if (state.hasActivePlanetFilters)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: onReset,
-              icon: const Icon(Icons.filter_alt_off),
-              label: const Text('Clear filters'),
-            ),
-          ),
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              if (state.isLoadingPlanets &&
-                state.planets.isEmpty) {
-              return isGridView
-                  ? _SkeletonGrid(
-                      columns: _gridColumns(constraints.maxWidth),
-                    )
-                  : const _SkeletonList();
-            }
+              if (state.isLoadingPlanets && state.planets.isEmpty) {
+                return CatalogSkeleton(
+                  isGridView: isGridView,
+                  columns: _gridColumns(constraints.maxWidth),
+                  gridAspectRatio: 0.78,
+                );
+              }
 
               if (state.planetError != null &&
                   state.planets.isEmpty) {
@@ -888,55 +730,27 @@ class _PlanetTab extends StatelessWidget {
                 return _EmptyView(
                   icon: Icons.public_off,
                   title: 'No planets found',
-                  subtitle:
-                      'Try another search or clear your filters.',
-                  onReset: onReset,
+                  subtitle: 'Try another search or clear your filters.',
+                  onAction: onReset,
+                  actionLabel: 'Reset',
                 );
               }
 
               final columns = _gridColumns(constraints.maxWidth);
 
-              return RefreshIndicator(
+              return CatalogResults<Planet>(
+                items: state.planets,
+                isGridView: isGridView,
+                columns: columns,
+                gridAspectRatio: 0.78,
+                controller: scrollController,
+                isLoadingMore: state.isLoadingMorePlanets,
                 onRefresh: onRetry,
-                child: isGridView
-                    ? GridView.builder(
-                        controller: scrollController,
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.all(12),
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: columns,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                          childAspectRatio: 0.78,
-                        ),
-                        itemCount: state.planets.length +
-                            (state.isLoadingMorePlanets ? columns : 0),
-                        itemBuilder: (context, index) {
-                          if (index >= state.planets.length) {
-                            return const _SkeletonCard();
-                          }
-
-                          return _PlanetTile(
-                            planet: state.planets[index],
-                          );
-                        },
-                      )
-                    : ListView.builder(
-                        controller: scrollController,
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.all(12),
-                        itemCount: state.planets.length +
-                            (state.isLoadingMorePlanets ? 1 : 0),
-                        itemBuilder: (context, index) {
-                          if (index >= state.planets.length) {
-                            return const _LoadingMore();
-                          }
-
-                          return _PlanetListTile(
-                            planet: state.planets[index],
-                          );
-                        },
-                      ),
+                itemBuilder: (context, planet) {
+                  return isGridView
+                      ? _PlanetTile(planet: planet)
+                      : _PlanetListTile(planet: planet);
+                },
               );
             },
           ),
@@ -947,32 +761,18 @@ class _PlanetTab extends StatelessWidget {
 }
 
 
-class _CharacterTile extends ConsumerWidget {
+class _CharacterTile extends StatelessWidget {
   const _CharacterTile({required this.character});
 
   final Character character;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final isFavorite = ref.watch(
-      dragonBallFavoritesProvider.select(
-        (ids) => ids.contains(character.id),
-      ),
-    );
+  Widget build(BuildContext context) {
 
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () {
-          FocusManager.instance.primaryFocus?.unfocus();
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => CharacterProfileView(
-                characterId: character.id,
-              ),
-            ),
-          );
-        },
+        onTap: () => openCharacterProfile(context, character.id),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -1004,28 +804,9 @@ class _CharacterTile extends ConsumerWidget {
                   Positioned(
                     top: 6,
                     right: 6,
-                    child: Material(
-                      color: Theme.of(context)
-                          .colorScheme.surface
-                          .withValues(alpha: 0.9),
-                      shape: const CircleBorder(),
-                      child: IconButton(
-                        visualDensity: VisualDensity.compact,
-                        tooltip: isFavorite
-                            ? 'Remove favorite'
-                            : 'Add favorite',
-                        onPressed: () {
-                          ref
-                              .read(dragonBallFavoritesProvider.notifier)
-                              .toggle(character.id);
-                        },
-                        icon: Icon(
-                          isFavorite
-                              ? Icons.favorite
-                              : Icons.favorite_border,
-                          color: isFavorite ? Colors.red : null,
-                        ),
-                      ),
+                    child: FavoriteToggleButton(
+                      characterId: character.id,
+                      overlay: true,
                     ),
                   ),
                 ],
@@ -1084,18 +865,13 @@ class _CharacterTile extends ConsumerWidget {
 }
 
 
-class _CharacterListTile extends ConsumerWidget {
+class _CharacterListTile extends StatelessWidget {
   const _CharacterListTile({required this.character});
 
   final Character character;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final isFavorite = ref.watch(
-      dragonBallFavoritesProvider.select(
-        (ids) => ids.contains(character.id),
-      ),
-    );
+  Widget build(BuildContext context) {
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
@@ -1138,31 +914,11 @@ class _CharacterListTile extends ConsumerWidget {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            IconButton(
-              tooltip: isFavorite ? 'Remove favorite' : 'Add favorite',
-              onPressed: () {
-                ref
-                    .read(dragonBallFavoritesProvider.notifier)
-                    .toggle(character.id);
-              },
-              icon: Icon(
-                isFavorite ? Icons.favorite : Icons.favorite_border,
-                color: isFavorite ? Colors.red : null,
-              ),
-            ),
+            FavoriteToggleButton(characterId: character.id),
             const Icon(Icons.chevron_right),
           ],
         ),
-        onTap: () {
-          FocusManager.instance.primaryFocus?.unfocus();
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => CharacterProfileView(
-                characterId: character.id,
-              ),
-            ),
-          );
-        },
+        onTap: () => openCharacterProfile(context, character.id),
       ),
     );
   }
@@ -1319,21 +1075,20 @@ class _PlanetTile extends StatelessWidget {
 
 
 
-class _FavoritesTab extends StatelessWidget {
+class _FavoritesTab extends ConsumerWidget {
   const _FavoritesTab({
-    required this.favoriteIds,
     required this.isGridView,
     required this.onViewChanged,
     required this.onBrowseCharacters,
   });
 
-  final Set<int> favoriteIds;
   final bool isGridView;
   final ValueChanged<bool> onViewChanged;
   final VoidCallback onBrowseCharacters;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final favoriteIds = ref.watch(dragonBallFavoritesProvider);
     final ids = favoriteIds.toList()..sort();
 
     return Column(
@@ -1348,99 +1103,58 @@ class _FavoritesTab extends StatelessWidget {
                   style: TextStyle(fontWeight: FontWeight.w600),
                 ),
               ),
-              SegmentedButton<bool>(
-                showSelectedIcon: false,
-                segments: const [
-                  ButtonSegment<bool>(
-                    value: true,
-                    icon: Icon(Icons.grid_view_rounded),
-                    label: Text('Grid'),
-                  ),
-                  ButtonSegment<bool>(
-                    value: false,
-                    icon: Icon(Icons.view_list_rounded),
-                    label: Text('List'),
-                  ),
-                ],
-                selected: {isGridView},
-                onSelectionChanged: (selection) {
-                  onViewChanged(selection.first);
-                },
+              ViewModeSelector(
+                isGridView: isGridView,
+                onChanged: onViewChanged,
               ),
             ],
           ),
         ),
         Expanded(
           child: ids.isEmpty
-    ? Center(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.favorite_border,
-                size: 50,
-                color: Colors.grey,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'No favorites yet',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Tap the heart on a character card to save a warrior.',
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: () {
-                  // Switch to the Characters tab.
-                  // This callback is passed in Step 3 below.
-                  onBrowseCharacters();
-                },
-                icon: const Icon(Icons.people_outline),
-                label: const Text('Browse characters'),
-              ),
-            ],
-          ),
-        ),
-      )
-              : isGridView
-                  ? LayoutBuilder(
-                      builder: (context, constraints) {
-                        final columns = _gridColumns(
-                          constraints.maxWidth,
-                        );
+            ? _EmptyView(
+                icon: Icons.favorite_border,
+                title: 'No favorites yet',
+                subtitle:
+                    'Tap the heart on a character card to save a warrior.',
+                onAction: onBrowseCharacters,
+                actionLabel: 'Browse characters',
+                actionIcon: Icons.people_outline,
+              )
+            : isGridView
+                ? LayoutBuilder(
+                    builder: (context, constraints) {
+                      final columns = _gridColumns(
+                        constraints.maxWidth,
+                      );
 
-                        return GridView.builder(
-                          padding: const EdgeInsets.all(12),
-                          itemCount: ids.length,
-                          gridDelegate:
-                              SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: columns,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
-                            childAspectRatio: 0.66,
-                          ),
-                          itemBuilder: (context, index) {
-                            return _FavoriteCharacterTile(
-                              characterId: ids[index],
-                            );
-                          },
-                        );
-                      },
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(12),
-                      itemCount: ids.length,
-                      itemBuilder: (context, index) {
-                        return _FavoriteCharacterListTile(
-                          characterId: ids[index],
-                        );
-                      },
-                    ),
+                      return GridView.builder(
+                        padding: const EdgeInsets.all(12),
+                        itemCount: ids.length,
+                        gridDelegate:
+                            SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          childAspectRatio: 0.66,
+                        ),
+                        itemBuilder: (context, index) {
+                          return _FavoriteCharacterTile(
+                            characterId: ids[index],
+                          );
+                        },
+                      );
+                    },
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: ids.length,
+                    itemBuilder: (context, index) {
+                      return _FavoriteCharacterListTile(
+                        characterId: ids[index],
+                      );
+                    },
+                  ),
         ),
       ],
     );
@@ -1462,12 +1176,6 @@ class _FavoriteCharacterListTile extends ConsumerWidget {
       characterProfileProvider(characterId),
     );
 
-    final isFavorite = ref.watch(
-      dragonBallFavoritesProvider.select(
-        (ids) => ids.contains(characterId),
-      ),
-    );
-
     return profileAsync.when(
       loading: () => Card(
         margin: const EdgeInsets.only(bottom: 10),
@@ -1483,12 +1191,7 @@ class _FavoriteCharacterListTile extends ConsumerWidget {
         child: ListTile(
           leading: const Icon(Icons.cloud_off),
           title: const Text('Unable to load character'),
-          trailing: IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () {
-              ref.invalidate(characterProfileProvider(characterId));
-            },
-          ),
+          trailing: FavoriteToggleButton(characterId: characterId),
         ),
       ),
       data: (character) => Card(
@@ -1518,29 +1221,8 @@ class _FavoriteCharacterListTile extends ConsumerWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          trailing: IconButton(
-            tooltip: 'Remove favorite',
-            onPressed: () {
-              ref
-                  .read(dragonBallFavoritesProvider.notifier)
-                  .toggle(characterId);
-            },
-            icon: Icon(
-              isFavorite ? Icons.favorite : Icons.favorite_border,
-              color: isFavorite ? Colors.red : null,
-            ),
-          ),
-          onTap: () {
-            FocusManager.instance.primaryFocus?.unfocus();
-
-            Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => CharacterProfileView(
-                  characterId: characterId,
-                ),
-              ),
-            );
-          },
+          trailing: FavoriteToggleButton(characterId: characterId),
+          onTap: () => openCharacterProfile(context, characterId),
         ),
       ),
     );
@@ -1559,7 +1241,7 @@ class _FavoriteCharacterListTile extends ConsumerWidget {
     );
 
     return profileAsync.when(
-      loading: () => const _SkeletonCard(),
+      loading: () => const CatalogSkeletonCard(),
       error: (_, __) => Card(
         child: Center(
           child: Padding(
@@ -1584,25 +1266,10 @@ class _FavoriteCharacterListTile extends ConsumerWidget {
         ),
       ),
       data: (character) {
-        final isFavorite = ref.watch(
-          dragonBallFavoritesProvider.select(
-            (ids) => ids.contains(characterId),
-          ),
-        );
-
         return Card(
           clipBehavior: Clip.antiAlias,
           child: InkWell(
-            onTap: () {
-              FocusManager.instance.primaryFocus?.unfocus();
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => CharacterProfileView(
-                    characterId: characterId,
-                  ),
-                ),
-              );
-            },
+            onTap: () => openCharacterProfile(context, characterId),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -1614,32 +1281,26 @@ class _FavoriteCharacterListTile extends ConsumerWidget {
                           color: Theme.of(context)
                               .colorScheme.surfaceContainer,
                           padding: const EdgeInsets.all(8),
-                          child: CachedNetworkImage(
-                            imageUrl: character.imageUrl,
-                            fit: BoxFit.contain,
-                            placeholder: (context, url) =>
-                                const Center(child: CircularProgressIndicator()),
-                            errorWidget: (context, url, error) =>
-                                const Icon(Icons.person, size: 48),
-                          )
+                          child: Hero(
+                            tag: 'character-${character.id}',
+                            child: CachedNetworkImage(
+                              imageUrl: character.imageUrl,
+                              fit: BoxFit.contain,
+                              placeholder: (context, url) => const Center(
+                                child: CircularProgressIndicator(),
+                              ),
+                              errorWidget: (context, url, error) =>
+                                  const Icon(Icons.person, size: 48),
+                            ),
+                          ),
                         ),
                       ),
                       Positioned(
                         top: 4,
                         right: 4,
-                        child: IconButton.filledTonal(
-                          onPressed: () {
-                            ref
-                                .read(
-                                  dragonBallFavoritesProvider.notifier,
-                                )
-                                .toggle(characterId);
-                          },
-                          icon: Icon(
-                            isFavorite
-                                ? Icons.favorite
-                                : Icons.favorite_border,
-                          ),
+                        child: FavoriteToggleButton(
+                          characterId: characterId,
+                          overlay: true,
                         ),
                       ),
                     ],
@@ -1659,24 +1320,6 @@ class _FavoriteCharacterListTile extends ConsumerWidget {
           ),
         );
       },
-    );
-  }
-}
-
-
-class _LoadingMore extends StatelessWidget {
-  const _LoadingMore();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.all(20),
-      child: Center(
-        child: SizedBox.square(
-          dimension: 22,
-          child: CircularProgressIndicator(strokeWidth: 2.5),
-        ),
-      ),
     );
   }
 }
@@ -1751,13 +1394,17 @@ class _EmptyView extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.subtitle,
-    required this.onReset,
+    this.onAction,
+    this.actionLabel = 'Reset',
+    this.actionIcon,
   });
 
   final IconData icon;
   final String title;
   final String subtitle;
-  final VoidCallback onReset;
+  final VoidCallback? onAction;
+  final String actionLabel;
+  final IconData? actionIcon;
 
   @override
   Widget build(BuildContext context) {
@@ -1774,12 +1421,24 @@ class _EmptyView extends StatelessWidget {
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 6),
-            Text(subtitle, textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            TextButton(
-              onPressed: onReset,
-              child: const Text('Reset'),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
             ),
+            if (onAction != null) ...[
+              const SizedBox(height: 12),
+              if (actionIcon != null)
+                FilledButton.icon(
+                  onPressed: onAction,
+                  icon: Icon(actionIcon),
+                  label: Text(actionLabel),
+                )
+              else
+                TextButton(
+                  onPressed: onAction,
+                  child: Text(actionLabel),
+                ),
+            ],
           ],
         ),
       ),
@@ -1793,137 +1452,4 @@ int _gridColumns(double width) {
   if (width < 900) return 3;
   if (width < 1200) return 4;
   return 5;
-}
-
-class _SkeletonGrid extends StatelessWidget {
-  const _SkeletonGrid({required this.columns});
-
-  final int columns;
-
-  @override
-  Widget build(BuildContext context) {
-    return GridView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: columns * 3,
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: columns,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 0.72,
-      ),
-      itemBuilder: (_, __) => const _SkeletonCard(),
-    );
-  }
-}
-
-
-class _SkeletonList extends StatelessWidget {
-  const _SkeletonList({this.itemCount = 6});
-
-  final int itemCount;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = Theme.of(context).colorScheme.surfaceContainerHighest;
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: itemCount,
-      itemBuilder: (context, index) {
-        return Card(
-          margin: const EdgeInsets.only(bottom: 10),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Container(
-                  width: 64,
-                  height: 64,
-                  decoration: BoxDecoration(
-                    color: color,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        height: 14,
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: color,
-                          borderRadius: BorderRadius.circular(5),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Container(
-                        height: 10,
-                        width: 120,
-                        decoration: BoxDecoration(
-                          color: color,
-                          borderRadius: BorderRadius.circular(5),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-
-class _SkeletonCard extends StatelessWidget {
-  const _SkeletonCard();
-
-  @override
-  Widget build(BuildContext context) {
-    final color = Theme.of(context).colorScheme.surfaceContainerHighest;
-
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              height: 14,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(5),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              height: 10,
-              width: 80,
-              decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(5),
-              ),
-            ),
-            const SizedBox(height: 12),
-          ],
-        ),
-      ),
-    );
-  }
 }
