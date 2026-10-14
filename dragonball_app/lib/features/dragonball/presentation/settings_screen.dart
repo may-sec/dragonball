@@ -81,6 +81,40 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         false;
   }
 
+  void _showPrivacyPolicy() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Privacy Policy'),
+        content: const SingleChildScrollView(
+          child: Text(
+            'Dragon Ball Universe does not require an account.\n\n'
+            'Local Storage\n'
+            'Favorites, preferences, and cached data may be '
+            'stored on your device.\n\n'
+            'Third-Party Services\n'
+            'Character and planet data are retrieved from '
+            'dragonball-api.com. Requests may be subject to '
+            'that service’s privacy practices.\n\n'
+            'Data Sharing\n'
+            'The app does not sell personal information.\n\n'
+            'Data Deletion\n'
+            'You can remove favorites and clear supported '
+            'caches through Settings. Uninstalling the app '
+            'may remove locally stored data.\n\n'
+            'This policy may be updated as the app changes.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _clearImageCache() async {
     final confirmed = await _confirm(
       title: 'Clear image cache?',
@@ -717,27 +751,10 @@ Future<void> _importFavorites() async {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.menu_book_outlined),
-              title: const Text('Open-source licenses'),
-              onTap: () => showLicensePage(
-                context: context,
-                applicationName: 'Dragon Ball Universe',
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.favorite_outline),
-              title: const Text('Acknowledgements'),
-              onTap: () {
-                showAboutDialog(
-                  context: context,
-                  applicationName: 'Dragon Ball Universe',
-                  applicationVersion: 'Dragon Ball Explorer',
-                  applicationLegalese:
-                      'Character and planet data are provided by '
-                      'the Dragon Ball API. This app is an independent '
-                      'explorer and is not an official Dragon Ball product.',
-                );
-              },
+              leading: const Icon(Icons.privacy_tip_outlined),
+              title: const Text('Privacy Policy'),
+              subtitle: const Text('How the app handles data'),
+              onTap: _showPrivacyPolicy,
             ),
             ListTile(
               leading: const Icon(Icons.restart_alt),

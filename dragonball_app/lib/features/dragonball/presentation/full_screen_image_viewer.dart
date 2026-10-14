@@ -1,3 +1,4 @@
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
@@ -33,15 +34,21 @@ class _FullScreenImageViewerState
   late final PageController _pageController;
   late int _currentIndex;
 
+  int get _initialIndex =>
+      widget.initialIndex.clamp(0, widget.images.length - 1);
+
+  bool get _hasMultipleImages => widget.images.length > 1;
+
   @override
   void initState() {
     super.initState();
 
-    _currentIndex = widget.initialIndex
-        .clamp(0, widget.images.length - 1);
+    _currentIndex = _initialIndex;
 
     _pageController = PageController(
-      initialPage: _currentIndex,
+      initialPage: _hasMultipleImages
+          ? widget.images.length * 1000 + _currentIndex
+          : 0,
     );
   }
 
@@ -51,10 +58,37 @@ class _FullScreenImageViewerState
     super.dispose();
   }
 
+  Widget _buildImage(int index) {
+    final image = widget.images[index];
+
+    final imageWidget = CachedNetworkImage(
+      imageUrl: image.imageUrl,
+      fit: BoxFit.contain,
+      width: double.infinity,
+      height: double.infinity,
+      placeholder: (_, __) => const Center(
+        child: CircularProgressIndicator(color: Colors.white),
+      ),
+      errorWidget: (_, __, ___) => const Icon(
+        Icons.broken_image_outlined,
+        color: Colors.white70,
+        size: 56,
+      ),
+    );
+
+    return Center(
+      child: index == _initialIndex
+          ? Hero(
+              tag: image.heroTag,
+              child: imageWidget,
+            )
+          : imageWidget,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final item = widget.images[_currentIndex];
-    final hasMultipleImages = widget.images.length > 1;
 
     return Scaffold(
       backgroundColor: const Color(0xFF090B12),
@@ -62,38 +96,22 @@ class _FullScreenImageViewerState
         child: Stack(
           children: [
             Positioned.fill(
-              child: PageView.builder(
-                controller: _pageController,
-                itemCount: widget.images.length,
-                onPageChanged: (index) {
-                  setState(() => _currentIndex = index);
-                },
-                itemBuilder: (context, index) {
-                  final image = widget.images[index];
-
-                  return Center(
-                    child: Hero(
-                      tag: image.heroTag,
-                      child: CachedNetworkImage(
-                        imageUrl: image.imageUrl,
-                        fit: BoxFit.contain,
-                        width: double.infinity,
-                        height: double.infinity,
-                        placeholder: (_, __) => const Center(
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                          ),
-                        ),
-                        errorWidget: (_, __, ___) => const Icon(
-                          Icons.broken_image_outlined,
-                          color: Colors.white70,
-                          size: 56,
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
+              child: _hasMultipleImages
+                  ? PageView.builder(
+                      controller: _pageController,
+                      onPageChanged: (pageIndex) {
+                        setState(() {
+                          _currentIndex =
+                              pageIndex % widget.images.length;
+                        });
+                      },
+                      itemBuilder: (context, pageIndex) {
+                        final index =
+                            pageIndex % widget.images.length;
+                        return _buildImage(index);
+                      },
+                    )
+                  : _buildImage(0),
             ),
 
             Positioned(
@@ -106,7 +124,7 @@ class _FullScreenImageViewerState
               ),
             ),
 
-            if (hasMultipleImages)
+            if (_hasMultipleImages)
               Positioned(
                 top: 20,
                 right: 20,

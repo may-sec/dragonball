@@ -493,7 +493,7 @@ class _TransformationGalleryScreenState
                     icon: const Icon(Icons.close_rounded),
                   ),
                   Text(
-                    '${_currentIndex + 1} / $count',
+                    '${(_currentIndex % count) + 1} / $count',
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w600,
