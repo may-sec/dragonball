@@ -1,4 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:dragonball_app/core/result/result.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -41,74 +42,88 @@ class PlanetDetailView extends ConsumerWidget {
             ),
           ),
         ),
-        data: (planet) => ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            Container(
-              height: 240,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainer,
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: CachedNetworkImage(
-                imageUrl: planet.imageUrl,
-                fit: BoxFit.contain,
-                placeholder: (_, __) => const Center(
-                  child: CircularProgressIndicator(),
+        
+        data: (planet) => RefreshIndicator(
+          onRefresh: () async {
+            final repository = ref.read(dragonBallRepositoryProvider);
+
+            final result = await repository.fetchPlanetDetail(planetId);
+
+            if (result case Ok()) {
+              ref.invalidate(planetDetailProvider(planetId));
+            }
+          },
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(20),
+            children: [
+              Container(
+                height: 240,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainer,
+                  borderRadius: BorderRadius.circular(24),
                 ),
-                errorWidget: (_, __, ___) => const Icon(
-                  Icons.public,
-                  size: 72,
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              planet.name,
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Chip(
-                avatar: Icon(
-                  planet.isDestroyed ? Icons.broken_image : Icons.public,
-                  size: 18,
-                ),
-                label: Text(
-                  planet.isDestroyed ? 'Destroyed' : 'Intact',
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              planet.description.isEmpty
-                  ? 'No description is available for this planet.'
-                  : planet.description,
-              style: Theme.of(context).textTheme.bodyLarge,
-            ),
-            if (planet.characters.isNotEmpty) ...[
-              const SizedBox(height: 28),
-              Text(
-                'Associated characters',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 12),
-              ...planet.characters.map(
-                (character) => Card(
-                  child: ListTile(
-                    leading: const CircleAvatar(
-                      child: Icon(Icons.person),
-                    ),
-                    title: Text(character.name),
-                    subtitle: Text(character.race),
+                child: CachedNetworkImage(
+                  imageUrl: planet.imageUrl,
+                  fit: BoxFit.contain,
+                  placeholder: (_, __) => const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                  errorWidget: (_, __, ___) => const Icon(
+                    Icons.public,
+                    size: 72,
                   ),
                 ),
               ),
+              const SizedBox(height: 20),
+              Text(
+                planet.name,
+                style: Theme.of(context).textTheme.headlineMedium,
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Chip(
+                  avatar: Icon(
+                    planet.isDestroyed ? Icons.broken_image : Icons.public,
+                    size: 18,
+                  ),
+                  label: Text(
+                    planet.isDestroyed ? 'Destroyed' : 'Intact',
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                planet.description.isEmpty
+                    ? 'No description is available for this planet.'
+                    : planet.description,
+                style: Theme.of(context).textTheme.bodyLarge,
+              ),
+              if (planet.characters.isNotEmpty) ...[
+                const SizedBox(height: 28),
+                Text(
+                  'Associated characters',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 12),
+                ...planet.characters.map(
+                  (character) => Card(
+                    child: ListTile(
+                      leading: const CircleAvatar(
+                        child: Icon(Icons.person),
+                      ),
+                      title: Text(character.name),
+                      subtitle: Text(character.race),
+                    ),
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
+
       ),
     );
   }

@@ -785,14 +785,12 @@ class _CharacterTile extends StatelessWidget {
                         .colorScheme.surfaceContainer,
                     padding: const EdgeInsets.all(8),
                     child: Hero(
-                      tag: 'character-${character.id}',
+                      tag: characterHeroTag(character.id),
                       child: CachedNetworkImage(
                         imageUrl: character.imageUrl,
                         fit: BoxFit.contain,
                         placeholder: (_, __) => const Center(
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                          ),
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         ),
                         errorWidget: (_, __, ___) => const Icon(
                           Icons.person_outline,
@@ -885,7 +883,7 @@ class _CharacterListTile extends StatelessWidget {
           width: 64,
           height: 76,
           child: Hero(
-            tag: 'character-${character.id}',
+            tag: characterHeroTag(character.id),
             child: CachedNetworkImage(
               imageUrl: character.imageUrl,
               fit: BoxFit.contain,
@@ -1204,11 +1202,14 @@ class _FavoriteCharacterListTile extends ConsumerWidget {
           leading: SizedBox(
             width: 64,
             height: 64,
-            child: CachedNetworkImage(
-              imageUrl: character.imageUrl,
-              fit: BoxFit.contain,
-              errorWidget: (_, __, ___) =>
-                  const Icon(Icons.person_outline),
+            child: Hero(
+              tag: favoriteCharacterHeroTag(character.id),
+              child: CachedNetworkImage(
+                imageUrl: character.imageUrl,
+                fit: BoxFit.contain,
+                errorWidget: (_, __, ___) =>
+                    const Icon(Icons.person_outline),
+              ),
             ),
           ),
           title: Text(
@@ -1222,7 +1223,18 @@ class _FavoriteCharacterListTile extends ConsumerWidget {
             overflow: TextOverflow.ellipsis,
           ),
           trailing: FavoriteToggleButton(characterId: characterId),
-          onTap: () => openCharacterProfile(context, characterId),
+          onTap: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => CharacterProfileView(
+                  characterId: characterId,
+                  fromFavorites: true,
+                ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -1269,7 +1281,18 @@ class _FavoriteCharacterListTile extends ConsumerWidget {
         return Card(
           clipBehavior: Clip.antiAlias,
           child: InkWell(
-            onTap: () => openCharacterProfile(context, characterId),
+          onTap: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => CharacterProfileView(
+                  characterId: characterId,
+                  fromFavorites: true,
+                ),
+              ),
+            );
+          },
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -1282,7 +1305,7 @@ class _FavoriteCharacterListTile extends ConsumerWidget {
                               .colorScheme.surfaceContainer,
                           padding: const EdgeInsets.all(8),
                           child: Hero(
-                            tag: 'character-${character.id}',
+                            tag: favoriteCharacterHeroTag(character.id),
                             child: CachedNetworkImage(
                               imageUrl: character.imageUrl,
                               fit: BoxFit.contain,
@@ -1292,7 +1315,7 @@ class _FavoriteCharacterListTile extends ConsumerWidget {
                               errorWidget: (context, url, error) =>
                                   const Icon(Icons.person, size: 48),
                             ),
-                          ),
+                          )
                         ),
                       ),
                       Positioned(

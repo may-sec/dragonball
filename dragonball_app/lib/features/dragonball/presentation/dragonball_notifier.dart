@@ -28,9 +28,18 @@ final dragonBallFavoritesProvider =
   DragonBallFavoritesController.new,
 );
 
+
+
 final characterProfileProvider =
     FutureProvider.family<CharacterProfile, int>((ref, id) async {
   final repository = ref.watch(dragonBallRepositoryProvider);
+
+  final cached = await repository.readCachedCharacterProfile(id);
+
+  if (cached != null) {
+    return cached;
+  }
+
   final result = await repository.fetchCharacterProfile(id);
 
   return switch (result) {
@@ -39,17 +48,24 @@ final characterProfileProvider =
   };
 });
 
-final planetDetailProvider = FutureProvider.family<Planet, int>(
-  (ref, id) async {
-    final repository = ref.watch(dragonBallRepositoryProvider);
-    final result = await repository.fetchPlanetDetail(id);
+final planetDetailProvider =
+    FutureProvider.family<Planet, int>((ref, id) async {
+  final repository = ref.watch(dragonBallRepositoryProvider);
 
-    return switch (result) {
-      Ok(:final value) => value,
-      Err(:final failure) => throw DragonBallRequestException(failure),
-    };
-  },
-);
+  final cached = await repository.readCachedPlanetDetail(id);
+
+  if (cached != null) {
+    return cached;
+  }
+
+  final result = await repository.fetchPlanetDetail(id);
+
+  return switch (result) {
+    Ok(:final value) => value,
+    Err(:final failure) => throw DragonBallRequestException(failure),
+  };
+});
+
 
 final class DragonBallRequestException implements Exception {
   const DragonBallRequestException(this.failure);
@@ -64,11 +80,73 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
   int _characterRequestSequence = 0;
   int _planetRequestSequence = 0;
 
+  
   @override
   Future<DragonBallState> build() async {
-    // `watch` declares the repository as a provider dependency.
     final repository = ref.watch(dragonBallRepositoryProvider);
 
+    final initialState = DragonBallState.initial();
+
+    // Read both catalogues from disk before requesting the network.
+    final cachedResults = await Future.wait<Object?>([
+      repository.readCachedCharacters(page: 1, limit: 10),
+      repository.readCachedPlanets(page: 1, limit: 10),
+    ]);
+
+    final cachedCharacterPage =
+        cachedResults[0] as Page<Character>?;
+    final cachedPlanetPage = cachedResults[1] as Page<Planet>?;
+
+    final hasCachedData =
+        cachedCharacterPage != null || cachedPlanetPage != null;
+
+    if (hasCachedData) {
+      // Reserve request IDs now so later searches or refreshes can
+      // invalidate these background requests.
+      final characterSequence = ++_characterRequestSequence;
+      final planetSequence = ++_planetRequestSequence;
+
+      // Start the network refresh after returning the cached state.
+      Future<void>.delayed(Duration.zero, () async {
+        if (characterSequence == _characterRequestSequence) {
+          await _runCharacterRequest(
+            sequence: characterSequence,
+            replace: true,
+            request: () => repository.fetchCharacters(
+              page: 1,
+              limit: 10,
+            ),
+          );
+        }
+
+        if (planetSequence == _planetRequestSequence) {
+          await _runPlanetRequest(
+            sequence: planetSequence,
+            replace: true,
+            request: () => repository.fetchPlanets(
+              page: 1,
+              limit: 10,
+            ),
+          );
+        }
+      });
+
+      return initialState.copyWith(
+        characters: cachedCharacterPage?.items ?? const <Character>[],
+        characterCurrentPage: cachedCharacterPage?.currentPage ?? 1,
+        hasNextCharacters: cachedCharacterPage?.hasNext ?? false,
+        isLoadingCharacters: true,
+        characterError: null,
+        planets: cachedPlanetPage?.items ?? const <Planet>[],
+        planetCurrentPage: cachedPlanetPage?.currentPage ?? 1,
+        hasNextPlanets: cachedPlanetPage?.hasNext ?? false,
+        isLoadingPlanets: true,
+        planetError: null,
+      );
+    }
+
+    // First launch: no cached catalogue data exists, so fetch from
+    // the API before returning the initial state.
     final results = await Future.wait<Object>([
       repository.fetchCharacters(page: 1, limit: 10),
       repository.fetchPlanets(page: 1, limit: 10),
@@ -89,7 +167,7 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
       Err() => const Page<Planet>.empty(),
     };
 
-    return DragonBallState.initial().copyWith(
+    return initialState.copyWith(
       characters: characterPage.items,
       characterCurrentPage: characterPage.currentPage,
       hasNextCharacters: characterPage.hasNext,
@@ -106,6 +184,7 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
       },
     );
   }
+
 
   DragonBallState? get _current => state.asData?.value;
 

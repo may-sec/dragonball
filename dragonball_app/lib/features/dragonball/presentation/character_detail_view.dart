@@ -1,4 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:dragonball_app/core/result/result.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'planet_detail_view.dart';
@@ -10,9 +11,11 @@ class CharacterProfileView extends ConsumerWidget {
   const CharacterProfileView({
     super.key,
     required this.characterId,
+    this.fromFavorites = false,
   });
 
   final int characterId;
+  final bool fromFavorites;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -48,8 +51,15 @@ class CharacterProfileView extends ConsumerWidget {
           ),
         ),
         data: (character) => RefreshIndicator(
-          onRefresh: () =>
-            ref.refresh(characterProfileProvider(characterId).future),
+          onRefresh: () async {
+            final repository = ref.read(dragonBallRepositoryProvider);
+
+            final result = await repository.fetchCharacterProfile(characterId);
+
+            if (result case Ok()) {
+              ref.invalidate(characterProfileProvider(characterId));
+            }
+          },
           child: ListView(
             padding: const EdgeInsets.all(20),
             children: [
@@ -67,7 +77,9 @@ class CharacterProfileView extends ConsumerWidget {
                     Padding(
                       padding: const EdgeInsets.all(12),
                       child: Hero(
-                        tag: 'character-${character.id}',
+                        tag: fromFavorites
+                            ? favoriteCharacterHeroTag(character.id)
+                            : characterHeroTag(character.id),
                         child: CachedNetworkImage(
                           imageUrl: character.imageUrl,
                           fit: BoxFit.contain,
@@ -79,7 +91,7 @@ class CharacterProfileView extends ConsumerWidget {
                             size: 80,
                           ),
                         ),
-                      ),
+                      )
                     ),
                     Positioned(
                       top: 8,
@@ -224,7 +236,6 @@ class _TransformationCarousel extends StatefulWidget {
 class _TransformationCarouselState
     extends State<_TransformationCarousel> {
   late final PageController _controller;
-  int _currentIndex = 0;
 
   @override
   void initState() {
@@ -358,11 +369,6 @@ class _TransformationCarouselState
               ),
             ),
           );
-        },
-        onPageChanged: (pageIndex) {
-          setState(() {
-            _currentIndex = pageIndex % count;
-          });
         },
       ),
     );

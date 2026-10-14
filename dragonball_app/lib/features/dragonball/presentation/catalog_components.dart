@@ -4,18 +4,6 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'character_detail_view.dart';
 import 'dragonball_notifier.dart';
 
-void openCharacterProfile(BuildContext context, int characterId) {
-  FocusManager.instance.primaryFocus?.unfocus();
-
-  Navigator.of(context).push(
-    MaterialPageRoute<void>(
-      builder: (_) => CharacterProfileView(
-        characterId: characterId,
-      ),
-    ),
-  );
-}
-
 class ViewModeSelector extends StatelessWidget {
   const ViewModeSelector({
     super.key,
@@ -310,4 +298,24 @@ class _SkeletonListItem extends StatelessWidget {
       ),
     );
   }
+}
+
+void openCharacterProfile(BuildContext context, int characterId) {
+  FocusManager.instance.primaryFocus?.unfocus();
+
+  Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => CharacterProfileView(
+        characterId: characterId,
+      ),
+    ),
+  );
+}
+
+String characterHeroTag(int characterId) {
+  return 'character-hero-$characterId';
+}
+
+String favoriteCharacterHeroTag(int characterId) {
+  return 'favorite-character-$characterId';
 }
