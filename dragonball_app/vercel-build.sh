@@ -189,7 +189,7 @@ for apk in apk_files:
           </div>
 
           <a class="download"
-             href="./{safe_href}"
+             href="/download/{safe_href}"
              download>
             Download APK
           </a>
