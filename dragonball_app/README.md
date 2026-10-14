@@ -44,5 +44,5 @@ flutter run -d "android" --dart-define-from-file=.env
 
 
 flutter build apk --release --dart-define-from-file=.env && \
-mkdir -p build/web/download && \
-cp build/app/outputs/flutter-apk/app-release.apk build/web/download/dragonball.apk
+mkdir -p web/download && \
+cp build/app/outputs/flutter-apk/app-release.apk web/download/dragonball.apk
