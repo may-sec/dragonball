@@ -145,12 +145,60 @@ apk_files = [
 apk_files.sort(key=version_key, reverse=True)
 
 # Copy APKs to the actual Vercel output directory.
-for apk in apk_files:
-    destination = output_dir / apk.name
 
-    # Avoid copying a file onto itself.
-    if apk.resolve() != destination.resolve():
-        shutil.copy2(apk, destination)
+for index, apk in enumerate(apk_files):
+    filename = apk.name
+    match = version_pattern.search(filename)
+
+    if match:
+        version = match.group(1)
+        build_number = match.group(2)
+        version_label = f"Version {version}"
+
+        if build_number:
+            version_label += f" (Build {build_number})"
+    else:
+        version_label = apk.stem
+
+    size_bytes = apk.stat().st_size
+
+    if size_bytes >= 1024 * 1024:
+        file_size = f"{size_bytes / (1024 * 1024):.1f} MB"
+    else:
+        file_size = f"{size_bytes / 1024:.0f} KB"
+
+    safe_version = html.escape(version_label)
+    safe_filename = html.escape(filename)
+    safe_href = html.escape(filename, quote=True)
+    safe_size = html.escape(file_size)
+
+    latest_badge = (
+        '<span class="latest-badge">LATEST</span>'
+        if index == 0 else ""
+    )
+
+    items.append(
+        f"""
+        <article class="release">
+          <div class="release-info">
+            <strong>
+              {safe_version} {latest_badge}
+            </strong>
+            <span>{safe_filename}</span>
+            <span class="file-meta">
+              Android APK · {safe_size}
+            </span>
+          </div>
+
+          <a class="download"
+             href="/download/{safe_href}"
+             download
+             onclick="startDownload(this)">
+            Download APK
+          </a>
+        </article>
+        """
+    )
 
 print(f"Found {len(apk_files)} APK release(s).")
 
@@ -374,6 +422,66 @@ page = f"""<!doctype html>
         width: 100%;
       }}
     }}
+    
+    .latest-badge {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 3px 7px;
+      border-radius: 6px;
+      background: var(--accent);
+      color: var(--button-text);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      vertical-align: middle;
+    }
+
+    .file-meta {
+      font-size: 12px !important;
+    }
+
+    .download {
+      transition:
+        transform 160ms ease,
+        opacity 160ms ease,
+        box-shadow 160ms ease;
+    }
+
+    .download:hover {
+      opacity: 0.92;
+      transform: translateY(-2px);
+      box-shadow: 0 5px 14px #ed6c2433;
+    }
+
+    .download:active {
+      transform: translateY(0) scale(0.98);
+    }
+
+
+    .snackbar {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      z-index: 1000;
+      width: max-content;
+      max-width: calc(100% - 32px);
+      padding: 12px 18px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: 0 8px 28px #0003;
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, 12px);
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+
+    .snackbar.visible {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+
   </style>
 </head>
 
@@ -396,6 +504,40 @@ page = f"""<!doctype html>
       your browser or file manager.
     </footer>
   </main>
+
+<div id="download-snackbar"
+     class="snackbar"
+     role="status"
+     aria-live="polite">
+  Preparing download…
+</div>
+
+<script>
+  let snackbarTimer;
+
+  function showSnackbar(message) {
+    const snackbar = document.getElementById('download-snackbar');
+    snackbar.textContent = message;
+    snackbar.classList.add('visible');
+
+    clearTimeout(snackbarTimer);
+    snackbarTimer = setTimeout(() => {
+      snackbar.classList.remove('visible');
+    }, 2500);
+  }
+
+  function startDownload(link) {
+    const originalText = link.textContent.trim();
+
+    link.textContent = 'Starting…';
+    showSnackbar('Preparing download…');
+
+    setTimeout(() => {
+      link.textContent = originalText;
+      showSnackbar('Download started!');
+    }, 600);
+  }
+</script>
 </body>
 </html>
 """
