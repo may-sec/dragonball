@@ -40,7 +40,8 @@ lib/
 
 
 
-flutter build web --release --no-wasm-dry-run --dart-define-from-file=.env && \
+flutter run -d "android" --dart-define-from-file=.env
+
 
 flutter build apk --release --dart-define-from-file=.env && \
 mkdir -p build/web/download && \

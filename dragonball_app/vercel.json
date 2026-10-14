@@ -1,4 +1,3 @@
-
 {
   "buildCommand": "bash vercel-build.sh",
   "outputDirectory": "build/web",
@@ -13,7 +12,7 @@
         },
         {
           "key": "Content-Disposition",
-          "value": "attachment; filename=\"dragonball.apk\""
+          "value": "attachment; filename=\"app-release.apk\""
         },
         {
           "key": "Cache-Control",
@@ -23,6 +22,10 @@
     }
   ],
   "rewrites": [
+    {
+      "source": "/download/(.*)",
+      "destination": "/download/$1"
+    },
     {
       "source": "/((?!download/).*)",
       "destination": "/index.html"

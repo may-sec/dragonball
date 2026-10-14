@@ -1,16 +1,29 @@
+#!/bin/bash
+set -e
 
-echo "Building Flutter web..."
-flutter build web --release --no-wasm-dry-run \
-  --dart-define=API_BASE_URL="$API_BASE_URL"
+export FLUTTER_ROOT_WARNING=false
+export PUB_SUMMARY_ONLY=true
 
-echo "Building Android APK..."
-flutter build apk --release \
-  --dart-define=API_BASE_URL="$API_BASE_URL"
+echo "Creating .env file from environment variables..."
+cat <<EOF > .env
+API_BASE_URL=${API_BASE_URL:-https://dragonball-api.com/api}
+EOF
 
-echo "Preparing APK download..."
-mkdir -p build/web/download
+echo "Downloading Flutter SDK..."
+if [ ! -d "_flutter" ]; then
+  git clone https://github.com/flutter/flutter.git --depth 1 -b stable _flutter
+fi
 
-cp build/app/outputs/flutter-apk/app-release.apk \
-  build/web/download/dragonball.apk
+export PATH="$PATH:`pwd`/_flutter/bin"
 
-echo "Web and APK artifacts are ready."
+git config --global --add safe.directory "`pwd`/_flutter"
+
+echo "Configuring Flutter..."
+flutter config --no-analytics
+flutter config --enable-web
+
+echo "Fetching dependencies..."
+flutter pub get
+
+echo "Building release web artifacts..."
+flutter build web --release --no-wasm-dry-run
