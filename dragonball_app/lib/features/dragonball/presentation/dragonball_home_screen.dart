@@ -9,6 +9,7 @@ import 'dragonball_notifier.dart';
 import 'dragonball_state.dart';
 import 'planet_detail_view.dart';
 import 'search_debouncer.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class DragonBallHomeScreen extends HookConsumerWidget {
   const DragonBallHomeScreen({super.key});
@@ -55,6 +56,12 @@ class DragonBallHomeScreen extends HookConsumerWidget {
 
     final characterGridView = useState(true);
     final planetGridView = useState(true);
+    final favoritesGridView = useState(true);
+
+    final preferencesLoaded = useState(false);
+
+    final characterSearchFocusNode = useFocusNode();
+    final planetSearchFocusNode = useFocusNode();
 
     final characterSearchController = useTextEditingController();
     final planetSearchController = useTextEditingController();
@@ -65,6 +72,66 @@ class DragonBallHomeScreen extends HookConsumerWidget {
     // Reuse one debouncer for this widget's lifetime.
     final characterDebouncer = useMemoized(SearchDebouncer.new);
     final planetDebouncer = useMemoized(SearchDebouncer.new);
+
+
+    useEffect(() {
+      var cancelled = false;
+
+      Future<void> loadViewPreferences() async {
+        final prefs = await SharedPreferences.getInstance();
+
+        if (cancelled) return;
+
+        characterGridView.value =
+            prefs.getBool('characters_grid_view') ?? true;
+
+        planetGridView.value =
+            prefs.getBool('planets_grid_view') ?? true;
+
+        favoritesGridView.value =
+            prefs.getBool('favorites_grid_view') ?? true;
+
+        preferencesLoaded.value = true;
+      }
+
+      loadViewPreferences();
+
+      return () {
+        cancelled = true;
+      };
+    }, []);
+
+    useEffect(() {
+      if (!preferencesLoaded.value) return null;
+
+      Future<void> saveViewPreferences() async {
+        final prefs = await SharedPreferences.getInstance();
+
+        await prefs.setBool(
+          'characters_grid_view',
+          characterGridView.value,
+        );
+
+        await prefs.setBool(
+          'planets_grid_view',
+          planetGridView.value,
+        );
+
+        await prefs.setBool(
+          'favorites_grid_view',
+          favoritesGridView.value,
+        );
+      }
+
+      saveViewPreferences();
+
+      return null;
+    }, [
+      preferencesLoaded.value,
+      characterGridView.value,
+      planetGridView.value,
+      favoritesGridView.value,
+    ]);
 
     useEffect(() {
       return characterDebouncer.dispose;
@@ -77,6 +144,10 @@ class DragonBallHomeScreen extends HookConsumerWidget {
     // Register and clean up scroll listeners with the widget lifecycle.
     useEffect(() {
       void onCharacterScroll() {
+        if (characterSearchFocusNode.hasFocus) {
+          characterSearchFocusNode.unfocus();
+        }
+
         if (!characterScrollController.hasClients) return;
 
         final position = characterScrollController.position;
@@ -89,6 +160,10 @@ class DragonBallHomeScreen extends HookConsumerWidget {
       }
 
       void onPlanetScroll() {
+        if (planetSearchFocusNode.hasFocus) {
+          planetSearchFocusNode.unfocus();
+        }
+
         if (!planetScrollController.hasClients) return;
 
         final position = planetScrollController.position;
@@ -107,7 +182,12 @@ class DragonBallHomeScreen extends HookConsumerWidget {
         characterScrollController.removeListener(onCharacterScroll);
         planetScrollController.removeListener(onPlanetScroll);
       };
-    }, [characterScrollController, planetScrollController]);
+    }, [
+      characterScrollController,
+      planetScrollController,
+      characterSearchFocusNode,
+      planetSearchFocusNode,
+    ]);
 
     // Side effects belong in a listener, not in the rendering logic.
     ref.listen<AsyncValue<DragonBallState>>(
@@ -247,6 +327,7 @@ class DragonBallHomeScreen extends HookConsumerWidget {
               state: state,
               isGridView: characterGridView.value,
               onViewChanged: (value) => characterGridView.value = value,
+              searchFocusNode: characterSearchFocusNode,
               searchController: characterSearchController,
               searchQuery: characterQuery.value,
               scrollController: characterScrollController,
@@ -286,6 +367,7 @@ class DragonBallHomeScreen extends HookConsumerWidget {
               state: state,
               isGridView: planetGridView.value,
               onViewChanged: (value) => planetGridView.value = value,
+              searchFocusNode: planetSearchFocusNode,
               searchController: planetSearchController,
               searchQuery: planetQuery.value,
               scrollController: planetScrollController,
@@ -321,7 +403,14 @@ class DragonBallHomeScreen extends HookConsumerWidget {
                     .resetPlanetFilters();
               },
             ),
-            _FavoritesTab(favoriteIds: favoriteIds),
+            _FavoritesTab(
+              favoriteIds: favoriteIds,
+              isGridView: favoritesGridView.value,
+              onViewChanged: (value) => favoritesGridView.value = value,
+              onBrowseCharacters: () {
+                selectedTab.value = 0;
+              },
+            ),
           ],
         ),
       ),
@@ -485,6 +574,7 @@ class _CharacterTab extends StatelessWidget {
     required this.onOpenFilters,
     required this.onRetry,
     required this.onReset,
+    required this.searchFocusNode,
   });
 
   final DragonBallState state;
@@ -497,6 +587,7 @@ class _CharacterTab extends StatelessWidget {
   final VoidCallback onOpenFilters;
   final Future<void> Function() onRetry;
   final VoidCallback onReset;
+  final FocusNode searchFocusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -509,6 +600,7 @@ class _CharacterTab extends StatelessWidget {
               Expanded(
                 child: TextField(
                   controller: searchController,
+                  focusNode: searchFocusNode,
                   onChanged: onSearchChanged,
                   decoration: InputDecoration(
                     hintText: 'Search warriors...',
@@ -581,9 +673,11 @@ class _CharacterTab extends StatelessWidget {
             builder: (context, constraints) {
               if (state.isLoadingCharacters &&
                   state.characters.isEmpty) {
-                return _SkeletonGrid(
-                  columns: _gridColumns(constraints.maxWidth),
-                );
+                return isGridView
+                    ? _SkeletonGrid(
+                        columns: _gridColumns(constraints.maxWidth),
+                      )
+                    : const _SkeletonList();
               }
 
               if (state.characterError != null &&
@@ -669,6 +763,7 @@ class _PlanetTab extends StatelessWidget {
     required this.onDestroyedChanged,
     required this.onRetry,
     required this.onReset,
+    required this.searchFocusNode,
   });
 
   final DragonBallState state;
@@ -681,6 +776,7 @@ class _PlanetTab extends StatelessWidget {
   final ValueChanged<bool?> onDestroyedChanged;
   final Future<void> Function() onRetry;
   final VoidCallback onReset;
+  final FocusNode searchFocusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -772,11 +868,13 @@ class _PlanetTab extends StatelessWidget {
           child: LayoutBuilder(
             builder: (context, constraints) {
               if (state.isLoadingPlanets &&
-                  state.planets.isEmpty) {
-                return _SkeletonGrid(
-                  columns: _gridColumns(constraints.maxWidth),
-                );
-              }
+                state.planets.isEmpty) {
+              return isGridView
+                  ? _SkeletonGrid(
+                      columns: _gridColumns(constraints.maxWidth),
+                    )
+                  : const _SkeletonList();
+            }
 
               if (state.planetError != null &&
                   state.planets.isEmpty) {
@@ -866,6 +964,7 @@ class _CharacterTile extends ConsumerWidget {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: () {
+          FocusManager.instance.primaryFocus?.unfocus();
           Navigator.of(context).push(
             MaterialPageRoute<void>(
               builder: (_) => CharacterProfileView(
@@ -1055,6 +1154,7 @@ class _CharacterListTile extends ConsumerWidget {
           ],
         ),
         onTap: () {
+          FocusManager.instance.primaryFocus?.unfocus();
           Navigator.of(context).push(
             MaterialPageRoute<void>(
               builder: (_) => CharacterProfileView(
@@ -1117,6 +1217,7 @@ class _PlanetListTile extends StatelessWidget {
         ),
         trailing: const Icon(Icons.chevron_right),
         onTap: () {
+          FocusManager.instance.primaryFocus?.unfocus();
           Navigator.of(context).push(
             MaterialPageRoute<void>(
               builder: (_) => PlanetDetailView(
@@ -1144,6 +1245,7 @@ class _PlanetTile extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: () {
+          FocusManager.instance.primaryFocus?.unfocus();
           Navigator.of(context).push(
             MaterialPageRoute<void>(
               builder: (_) => PlanetDetailView(
@@ -1216,49 +1318,236 @@ class _PlanetTile extends StatelessWidget {
 }
 
 
+
 class _FavoritesTab extends StatelessWidget {
-  const _FavoritesTab({required this.favoriteIds});
+  const _FavoritesTab({
+    required this.favoriteIds,
+    required this.isGridView,
+    required this.onViewChanged,
+    required this.onBrowseCharacters,
+  });
 
   final Set<int> favoriteIds;
+  final bool isGridView;
+  final ValueChanged<bool> onViewChanged;
+  final VoidCallback onBrowseCharacters;
 
   @override
   Widget build(BuildContext context) {
-    if (favoriteIds.isEmpty) {
-      return const _EmptyView(
-        icon: Icons.favorite_border,
-        title: 'No favorites yet',
-        subtitle: 'Tap the heart on a character card to save a warrior.',
-        onReset: _doNothing,
-      );
-    }
-
     final ids = favoriteIds.toList()..sort();
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = _gridColumns(constraints.maxWidth);
-
-        return GridView.builder(
-          padding: const EdgeInsets.all(12),
-          itemCount: ids.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: 0.66,
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          child: Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Saved characters',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              SegmentedButton<bool>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment<bool>(
+                    value: true,
+                    icon: Icon(Icons.grid_view_rounded),
+                    label: Text('Grid'),
+                  ),
+                  ButtonSegment<bool>(
+                    value: false,
+                    icon: Icon(Icons.view_list_rounded),
+                    label: Text('List'),
+                  ),
+                ],
+                selected: {isGridView},
+                onSelectionChanged: (selection) {
+                  onViewChanged(selection.first);
+                },
+              ),
+            ],
           ),
-          itemBuilder: (context, index) {
-            return _FavoriteCharacterTile(characterId: ids[index]);
-          },
-        );
-      },
+        ),
+        Expanded(
+          child: ids.isEmpty
+    ? Center(
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.favorite_border,
+                size: 50,
+                color: Colors.grey,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'No favorites yet',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Tap the heart on a character card to save a warrior.',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: () {
+                  // Switch to the Characters tab.
+                  // This callback is passed in Step 3 below.
+                  onBrowseCharacters();
+                },
+                icon: const Icon(Icons.people_outline),
+                label: const Text('Browse characters'),
+              ),
+            ],
+          ),
+        ),
+      )
+              : isGridView
+                  ? LayoutBuilder(
+                      builder: (context, constraints) {
+                        final columns = _gridColumns(
+                          constraints.maxWidth,
+                        );
+
+                        return GridView.builder(
+                          padding: const EdgeInsets.all(12),
+                          itemCount: ids.length,
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: columns,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
+                            childAspectRatio: 0.66,
+                          ),
+                          itemBuilder: (context, index) {
+                            return _FavoriteCharacterTile(
+                              characterId: ids[index],
+                            );
+                          },
+                        );
+                      },
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: ids.length,
+                      itemBuilder: (context, index) {
+                        return _FavoriteCharacterListTile(
+                          characterId: ids[index],
+                        );
+                      },
+                    ),
+        ),
+      ],
     );
   }
 }
 
-void _doNothing() {}
 
-class _FavoriteCharacterTile extends ConsumerWidget {
+
+class _FavoriteCharacterListTile extends ConsumerWidget {
+  const _FavoriteCharacterListTile({
+    required this.characterId,
+  });
+
+  final int characterId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final profileAsync = ref.watch(
+      characterProfileProvider(characterId),
+    );
+
+    final isFavorite = ref.watch(
+      dragonBallFavoritesProvider.select(
+        (ids) => ids.contains(characterId),
+      ),
+    );
+
+    return profileAsync.when(
+      loading: () => Card(
+        margin: const EdgeInsets.only(bottom: 10),
+        child: const SizedBox(
+          height: 88,
+          child: Center(
+            child: LinearProgressIndicator(),
+          ),
+        ),
+      ),
+      error: (_, __) => Card(
+        margin: const EdgeInsets.only(bottom: 10),
+        child: ListTile(
+          leading: const Icon(Icons.cloud_off),
+          title: const Text('Unable to load character'),
+          trailing: IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () {
+              ref.invalidate(characterProfileProvider(characterId));
+            },
+          ),
+        ),
+      ),
+      data: (character) => Card(
+        margin: const EdgeInsets.only(bottom: 10),
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 6,
+          ),
+          leading: SizedBox(
+            width: 64,
+            height: 64,
+            child: CachedNetworkImage(
+              imageUrl: character.imageUrl,
+              fit: BoxFit.contain,
+              errorWidget: (_, __, ___) =>
+                  const Icon(Icons.person_outline),
+            ),
+          ),
+          title: Text(
+            character.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            '${character.race} • ${character.gender}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: IconButton(
+            tooltip: 'Remove favorite',
+            onPressed: () {
+              ref
+                  .read(dragonBallFavoritesProvider.notifier)
+                  .toggle(characterId);
+            },
+            icon: Icon(
+              isFavorite ? Icons.favorite : Icons.favorite_border,
+              color: isFavorite ? Colors.red : null,
+            ),
+          ),
+          onTap: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => CharacterProfileView(
+                  characterId: characterId,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+ class _FavoriteCharacterTile extends ConsumerWidget {
   const _FavoriteCharacterTile({required this.characterId});
 
   final int characterId;
@@ -1305,6 +1594,7 @@ class _FavoriteCharacterTile extends ConsumerWidget {
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             onTap: () {
+              FocusManager.instance.primaryFocus?.unfocus();
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => CharacterProfileView(
@@ -1525,6 +1815,69 @@ class _SkeletonGrid extends StatelessWidget {
     );
   }
 }
+
+
+class _SkeletonList extends StatelessWidget {
+  const _SkeletonList({this.itemCount = 6});
+
+  final int itemCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.surfaceContainerHighest;
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(12),
+      itemCount: itemCount,
+      itemBuilder: (context, index) {
+        return Card(
+          margin: const EdgeInsets.only(bottom: 10),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        height: 14,
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          color: color,
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Container(
+                        height: 10,
+                        width: 120,
+                        decoration: BoxDecoration(
+                          color: color,
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 
 class _SkeletonCard extends StatelessWidget {
   const _SkeletonCard();
