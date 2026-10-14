@@ -95,6 +95,7 @@ mkdir -p "${OUTPUT_DOWNLOAD_DIR}"
 
 echo "Generating APK download page..."
 
+
 python3 - \
   "${SOURCE_DOWNLOAD_DIR}" \
   "${OUTPUT_DOWNLOAD_DIR}" <<'PYTHON'
@@ -103,16 +104,11 @@ import pathlib
 import re
 import shutil
 import sys
+from urllib.parse import quote
 
 source_dir = pathlib.Path(sys.argv[1])
 output_dir = pathlib.Path(sys.argv[2])
-
 output_dir.mkdir(parents=True, exist_ok=True)
-
-# Accept versioned filenames such as:
-# dragonball-v1.0.0.apk
-# dragonball-v1.1.0-3.apk
-# dragonball-v1.10.0-12.apk
 
 version_pattern = re.compile(
     r"-v(\d+(?:\.\d+)*)(?:-(\d+))?\.apk$",
@@ -122,46 +118,43 @@ version_pattern = re.compile(
 
 def version_key(path):
     match = version_pattern.search(path.name)
-
     if not match:
-        # Unrecognized filenames appear after versioned releases.
         return (0, (), 0, path.name.lower())
 
-    version = tuple(
-        int(part) for part in match.group(1).split(".")
-    )
+    version = tuple(int(part) for part in match.group(1).split("."))
     build_number = int(match.group(2) or 0)
-
     return (1, version, build_number, path.name.lower())
 
 
-# Discover APKs supplied in web/download.
-apk_files = [
-    file
-    for file in source_dir.glob("*.apk")
-    if file.is_file()
-]
+apk_files = sorted(
+    [file for file in source_dir.glob("*.apk") if file.is_file()],
+    key=version_key,
+    reverse=True,
+)
 
-apk_files.sort(key=version_key, reverse=True)
+# Copy APKs into the Vercel deployment directory.
+for apk in apk_files:
+    destination = output_dir / apk.name
+    if apk.resolve() != destination.resolve():
+        shutil.copy2(apk, destination)
 
-# Copy APKs to the actual Vercel output directory.
+print(f"Found {len(apk_files)} APK release(s).")
+
+# Generate release cards.
+items = []
 
 for index, apk in enumerate(apk_files):
     filename = apk.name
     match = version_pattern.search(filename)
 
     if match:
-        version = match.group(1)
-        build_number = match.group(2)
-        version_label = f"Version {version}"
-
-        if build_number:
-            version_label += f" (Build {build_number})"
+        version_label = f"Version {match.group(1)}"
+        if match.group(2):
+            version_label += f" (Build {match.group(2)})"
     else:
         version_label = apk.stem
 
     size_bytes = apk.stat().st_size
-
     if size_bytes >= 1024 * 1024:
         file_size = f"{size_bytes / (1024 * 1024):.1f} MB"
     else:
@@ -169,7 +162,7 @@ for index, apk in enumerate(apk_files):
 
     safe_version = html.escape(version_label)
     safe_filename = html.escape(filename)
-    safe_href = html.escape(filename, quote=True)
+    safe_href = html.escape(quote(filename), quote=True)
     safe_size = html.escape(file_size)
 
     latest_badge = (
@@ -177,109 +170,44 @@ for index, apk in enumerate(apk_files):
         if index == 0 else ""
     )
 
-    items.append(
-        f"""
-        <article class="release">
-          <div class="release-info">
-            <strong>
-              {safe_version} {latest_badge}
-            </strong>
-            <span>{safe_filename}</span>
-            <span class="file-meta">
-              Android APK · {safe_size}
-            </span>
-          </div>
+    items.append(f"""
+      <article class="release">
+        <div class="release-info">
+          <strong>{safe_version} {latest_badge}</strong>
+          <span>{safe_filename}</span>
+          <span class="file-meta">Android APK · {safe_size}</span>
+        </div>
+        <a class="download"
+           href="/download/{safe_href}"
+           download
+           onclick="startDownload(this)">
+          Download APK
+        </a>
+      </article>
+    """)
 
-          <a class="download"
-             href="/download/{safe_href}"
-             download
-             onclick="startDownload(this)">
-            Download APK
-          </a>
-        </article>
-        """
-    )
+listing = "\n".join(items) if items else """
+  <section class="empty">
+    <h2>No APK releases available</h2>
+    <p>Android releases will appear here after APK files are added.</p>
+  </section>
+"""
 
-print(f"Found {len(apk_files)} APK release(s).")
-
-# --------------------------------------------------
-# Build the release cards
-# --------------------------------------------------
-
-items = []
-
-for apk in apk_files:
-    filename = apk.name
-    match = version_pattern.search(filename)
-
-    if match:
-        version = match.group(1)
-        build_number = match.group(2)
-
-        version_label = f"Version {version}"
-
-        if build_number:
-            version_label += f" (Build {build_number})"
-    else:
-        version_label = apk.stem
-
-    safe_version = html.escape(version_label)
-    safe_filename = html.escape(filename)
-    safe_href = html.escape(filename, quote=True)
-
-    items.append(
-        f"""
-        <article class="release">
-          <div class="release-info">
-            <strong>{safe_version}</strong>
-            <span>{safe_filename}</span>
-            <span class="file-type">Android APK</span>
-          </div>
-
-          <a class="download"
-             href="/download/{safe_href}"
-             download>
-            Download APK
-          </a>
-        </article>
-        """
-    )
-
-if items:
-    listing = "\n".join(items)
-else:
-    listing = """
-    <section class="empty">
-      <h2>No APK releases available</h2>
-      <p>
-        Android releases will appear here after APK files
-        are added to the release directory.
-      </p>
-    </section>
-    """
-
-# --------------------------------------------------
-# Generate index.html automatically
-# --------------------------------------------------
-
-page = f"""<!doctype html>
+# Use a regular template string so CSS and JavaScript braces
+# do not need escaping.
+page = """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1">
-
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#ED6C24">
-
   <meta name="description"
         content="Download Android releases of Dragon Ball Universe.">
-
   <title>Dragon Ball Universe — APK Downloads</title>
 
   <style>
-    :root {{
+    :root {
       color-scheme: light dark;
-
       --accent: #ED6C24;
       --background: #FFFAF5;
       --surface: #FFFFFF;
@@ -287,10 +215,10 @@ page = f"""<!doctype html>
       --muted: #71665E;
       --border: #E8DDD3;
       --button-text: #FFFFFF;
-    }}
+    }
 
-    @media (prefers-color-scheme: dark) {{
-      :root {{
+    @media (prefers-color-scheme: dark) {
+      :root {
         --accent: #FF8A45;
         --background: #171717;
         --surface: #242424;
@@ -298,49 +226,47 @@ page = f"""<!doctype html>
         --muted: #B5ACA5;
         --border: #414141;
         --button-text: #171717;
-      }}
-    }}
+      }
+    }
 
-    * {{
-      box-sizing: border-box;
-    }}
+    * { box-sizing: border-box; }
 
-    body {{
+    body {
       margin: 0;
       padding: 32px 18px;
       background: var(--background);
       color: var(--text);
       font-family: system-ui, -apple-system, BlinkMacSystemFont,
                    "Segoe UI", sans-serif;
-    }}
+    }
 
-    main {{
+    main {
       width: 100%;
       max-width: 760px;
       margin: 0 auto;
-    }}
+    }
 
-    .brand {{
+    .brand {
       color: var(--accent);
       font-size: 13px;
       font-weight: 800;
       letter-spacing: 2px;
       text-transform: uppercase;
-    }}
+    }
 
-    h1 {{
+    h1 {
       margin: 12px 0 8px;
       font-size: clamp(28px, 5vw, 42px);
       line-height: 1.15;
-    }}
+    }
 
-    .description {{
+    .description {
       margin-bottom: 28px;
       color: var(--muted);
       line-height: 1.7;
-    }}
+    }
 
-    .release {{
+    .release {
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -350,26 +276,39 @@ page = f"""<!doctype html>
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 16px;
-    }}
+    }
 
-    .release-info {{
+    .release-info {
       display: flex;
       flex-direction: column;
       gap: 6px;
       min-width: 0;
       overflow-wrap: anywhere;
-    }}
+    }
 
-    .release-info strong {{
-      font-size: 16px;
-    }}
+    .release-info strong { font-size: 16px; }
 
-    .release-info span {{
+    .release-info span {
       color: var(--muted);
       font-size: 13px;
-    }}
+    }
 
-    .download {{
+    .latest-badge {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 3px 7px;
+      border-radius: 6px;
+      background: var(--accent);
+      color: var(--button-text) !important;
+      font-size: 10px !important;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      vertical-align: middle;
+    }
+
+    .file-meta { font-size: 12px !important; }
+
+    .download {
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -380,71 +319,8 @@ page = f"""<!doctype html>
       color: var(--button-text);
       text-decoration: none;
       font-weight: 700;
-      transition: opacity 150ms ease;
-    }}
-
-    .download:hover {{
-      opacity: 0.85;
-    }}
-
-    .download:focus-visible {{
-      outline: 3px solid var(--accent);
-      outline-offset: 3px;
-    }}
-
-    .empty {{
-      padding: 24px;
-      border: 1px dashed var(--border);
-      border-radius: 16px;
-    }}
-
-    .empty p {{
-      color: var(--muted);
-      line-height: 1.6;
-    }}
-
-    footer {{
-      margin-top: 32px;
-      padding-top: 16px;
-      border-top: 1px solid var(--border);
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.6;
-    }}
-
-    @media (max-width: 440px) {{
-      .release {{
-        align-items: flex-start;
-        flex-direction: column;
-      }}
-
-      .download {{
-        width: 100%;
-      }}
-    }}
-    
-    .latest-badge {
-      display: inline-block;
-      margin-left: 6px;
-      padding: 3px 7px;
-      border-radius: 6px;
-      background: var(--accent);
-      color: var(--button-text);
-      font-size: 10px;
-      font-weight: 800;
-      letter-spacing: 0.5px;
-      vertical-align: middle;
-    }
-
-    .file-meta {
-      font-size: 12px !important;
-    }
-
-    .download {
-      transition:
-        transform 160ms ease,
-        opacity 160ms ease,
-        box-shadow 160ms ease;
+      transition: transform 160ms ease, opacity 160ms ease,
+                  box-shadow 160ms ease;
     }
 
     .download:hover {
@@ -453,10 +329,30 @@ page = f"""<!doctype html>
       box-shadow: 0 5px 14px #ed6c2433;
     }
 
-    .download:active {
-      transform: translateY(0) scale(0.98);
+    .download:active { transform: scale(0.98); }
+
+    .download:focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: 3px;
     }
 
+    .empty {
+      padding: 24px;
+      border: 1px dashed var(--border);
+      border-radius: 16px;
+    }
+
+    .empty p, footer {
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    footer {
+      margin-top: 32px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      font-size: 13px;
+    }
 
     .snackbar {
       position: fixed;
@@ -482,65 +378,65 @@ page = f"""<!doctype html>
       transform: translate(-50%, 0);
     }
 
+    @media (max-width: 440px) {
+      .release {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .download { width: 100%; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .download, .snackbar { transition: none; }
+    }
   </style>
 </head>
 
 <body>
   <main>
     <div class="brand">Dragon Ball Universe</div>
-
     <h1>APK Downloads</h1>
-
     <p class="description">
-      Browse available Android releases. The newest version
-      appears first.
+      Browse available Android releases. The newest version appears first.
     </p>
 
-    {listing}
+    __RELEASE_LIST__
 
     <footer>
       Install APK files only from sources you trust.
-      Android may ask you to authorize installation from
-      your browser or file manager.
+      Android may ask you to authorize installation from your browser
+      or file manager.
     </footer>
   </main>
 
-<div id="download-snackbar"
-     class="snackbar"
-     role="status"
-     aria-live="polite">
-  Preparing download…
-</div>
+  <div id="download-snackbar" class="snackbar"
+       role="status" aria-live="polite">
+    Preparing download…
+  </div>
 
-<script>
-  let snackbarTimer;
+  <script>
+    let snackbarTimer;
 
-  function showSnackbar(message) {
-    const snackbar = document.getElementById('download-snackbar');
-    snackbar.textContent = message;
-    snackbar.classList.add('visible');
+    function showSnackbar(message) {
+      const snackbar = document.getElementById('download-snackbar');
+      snackbar.textContent = message;
+      snackbar.classList.add('visible');
 
-    clearTimeout(snackbarTimer);
-    snackbarTimer = setTimeout(() => {
-      snackbar.classList.remove('visible');
-    }, 2500);
-  }
+      clearTimeout(snackbarTimer);
+      snackbarTimer = setTimeout(() => {
+        snackbar.classList.remove('visible');
+      }, 2500);
+    }
 
-  function startDownload(link) {
-    const originalText = link.textContent.trim();
-
-    link.textContent = 'Starting…';
-    showSnackbar('Preparing download…');
-
-    setTimeout(() => {
-      link.textContent = originalText;
+    function startDownload(link) {
       showSnackbar('Download started!');
-    }, 600);
-  }
-</script>
+    }
+  </script>
 </body>
 </html>
 """
+
+page = page.replace("__RELEASE_LIST__", listing)
 
 index_file = output_dir / "index.html"
 index_file.write_text(page, encoding="utf-8")
