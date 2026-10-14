@@ -1,9 +1,10 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:dragonball_app/features/dragonball/presentation/app_settings.dart';
 import 'package:dragonball_app/features/dragonball/presentation/character_filter_sheet.dart';
+import 'package:dragonball_app/features/dragonball/presentation/settings_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/dragonball_models.dart';
 import 'catalog_components.dart';
@@ -52,15 +53,8 @@ class DragonBallHomeScreen extends HookConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     // Local UI state: it does not need to be shared across the application.
-    final selectedTab = useState(0);
     final characterQuery = useState('');
     final planetQuery = useState('');
-
-    final characterGridView = useState(true);
-    final planetGridView = useState(true);
-    final favoritesGridView = useState(true);
-
-    final preferencesLoaded = useState(false);
 
     final characterSearchFocusNode = useFocusNode();
     final planetSearchFocusNode = useFocusNode();
@@ -76,64 +70,21 @@ class DragonBallHomeScreen extends HookConsumerWidget {
     final planetDebouncer = useMemoized(SearchDebouncer.new);
 
 
-    useEffect(() {
-      var cancelled = false;
+    final settings = ref.watch(appSettingsProvider);
 
-      Future<void> loadViewPreferences() async {
-        final prefs = await SharedPreferences.getInstance();
+    final selectedTab = useState(0);
 
-        if (cancelled) return;
-
-        characterGridView.value =
-            prefs.getBool('characters_grid_view') ?? true;
-
-        planetGridView.value =
-            prefs.getBool('planets_grid_view') ?? true;
-
-        favoritesGridView.value =
-            prefs.getBool('favorites_grid_view') ?? true;
-
-        preferencesLoaded.value = true;
-      }
-
-      loadViewPreferences();
-
-      return () {
-        cancelled = true;
-      };
-    }, []);
+    final characterGridView = settings.charactersGridView;
+    final planetGridView = settings.planetsGridView;
+    final favoritesGridView = settings.favoritesGridView;
 
     useEffect(() {
-      if (!preferencesLoaded.value) return null;
-
-      Future<void> saveViewPreferences() async {
-        final prefs = await SharedPreferences.getInstance();
-
-        await prefs.setBool(
-          'characters_grid_view',
-          characterGridView.value,
-        );
-
-        await prefs.setBool(
-          'planets_grid_view',
-          planetGridView.value,
-        );
-
-        await prefs.setBool(
-          'favorites_grid_view',
-          favoritesGridView.value,
-        );
+      if (settings.isLoaded) {
+        selectedTab.value = settings.defaultTab;
       }
-
-      saveViewPreferences();
 
       return null;
-    }, [
-      preferencesLoaded.value,
-      characterGridView.value,
-      planetGridView.value,
-      favoritesGridView.value,
-    ]);
+    }, [settings.isLoaded, settings.defaultTab]);
 
     useEffect(() {
       return characterDebouncer.dispose;
@@ -287,11 +238,15 @@ class DragonBallHomeScreen extends HookConsumerWidget {
             ),
           ),
           IconButton(
-            tooltip: 'Refresh catalogue',
+            tooltip: 'Settings',
             onPressed: () {
-              ref.read(dragonBallControllerProvider.notifier).refresh();
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const SettingsScreen(),
+                ),
+              );
             },
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.settings_outlined),
           ),
           const SizedBox(width: 4),
         ],
@@ -334,8 +289,8 @@ class DragonBallHomeScreen extends HookConsumerWidget {
           children: [
             _CharacterTab(
               state: state,
-              isGridView: characterGridView.value,
-              onViewChanged: (value) => characterGridView.value = value,
+              isGridView: characterGridView,
+              sortOrder: settings.catalogSortOrder,
               searchFocusNode: characterSearchFocusNode,
               searchController: characterSearchController,
               searchQuery: characterQuery.value,
@@ -378,8 +333,8 @@ class DragonBallHomeScreen extends HookConsumerWidget {
             ),
             _PlanetTab(
               state: state,
-              isGridView: planetGridView.value,
-              onViewChanged: (value) => planetGridView.value = value,
+              isGridView: planetGridView,
+              sortOrder: settings.catalogSortOrder,
               searchFocusNode: planetSearchFocusNode,
               searchController: planetSearchController,
               searchQuery: planetQuery.value,
@@ -419,8 +374,8 @@ class DragonBallHomeScreen extends HookConsumerWidget {
               },
             ),
             _FavoritesTab(
-              isGridView: favoritesGridView.value,
-              onViewChanged: (value) => favoritesGridView.value = value,
+              isGridView: favoritesGridView,
+              sortOrder: settings.favoritesSortOrder,
               onBrowseCharacters: () {
                 selectedTab.value = 0;
               },
@@ -479,7 +434,6 @@ class _CharacterTab extends StatelessWidget {
   const _CharacterTab({
     required this.state,
     required this.isGridView,
-    required this.onViewChanged,
     required this.searchController,
     required this.searchQuery,
     required this.scrollController,
@@ -488,11 +442,11 @@ class _CharacterTab extends StatelessWidget {
     required this.onRetry,
     required this.onReset,
     required this.searchFocusNode,
+    required this.sortOrder,
   });
 
   final DragonBallState state;
   final bool isGridView;
-  final ValueChanged<bool> onViewChanged;
   final TextEditingController searchController;
   final String searchQuery;
   final ScrollController scrollController;
@@ -501,69 +455,84 @@ class _CharacterTab extends StatelessWidget {
   final Future<void> Function() onRetry;
   final VoidCallback onReset;
   final FocusNode searchFocusNode;
+  final String sortOrder;
+
 
   @override
   Widget build(BuildContext context) {
+  final displayedCharacters = [...state.characters];
+
+  switch (sortOrder) {
+    case 'name_asc':
+      displayedCharacters.sort(
+        (a, b) => a.name.toLowerCase().compareTo(
+              b.name.toLowerCase(),
+            ),
+      );
+      break;
+    case 'name_desc':
+      displayedCharacters.sort(
+        (a, b) => b.name.toLowerCase().compareTo(
+              a.name.toLowerCase(),
+            ),
+      );
+      break;
+  }
+
     return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: searchController,
-                  focusNode: searchFocusNode,
-                  onChanged: onSearchChanged,
-                  decoration: InputDecoration(
-                    hintText: 'Search warriors...',
-                    prefixIcon: const Icon(Icons.search),
-                    suffixIcon: searchQuery.isEmpty
-                        ? null
-                        : IconButton(
-                            onPressed: () {
-                              searchController.clear();
-                              onSearchChanged('');
-                            },
-                            icon: const Icon(Icons.close),
-                          ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Badge(
-                isLabelVisible: state.hasActiveCharacterFilters,
-                child: IconButton.filledTonal(
-                  onPressed: onOpenFilters,
-                  icon: const Icon(Icons.tune),
-                ),
-              ),
-            ],
-          ),
-        ),
+    children: [
+      if (state.isLoadingCharacters)
+        const LinearProgressIndicator(),      
       Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
         child: Row(
           children: [
-            ViewModeSelector(
-              isGridView: isGridView,
-              onChanged: onViewChanged,
-            ),
-            const Spacer(),
-            if (state.hasActiveCharacterFilters)
-              TextButton.icon(
-                onPressed: onReset,
-                icon: const Icon(Icons.filter_alt_off, size: 18),
-                label: const Text('Clear filters'),
+            Expanded(
+              child: TextField(
+                controller: searchController,
+                focusNode: searchFocusNode,
+                onChanged: onSearchChanged,
+                decoration: InputDecoration(
+                  hintText: 'Search warriors...',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: searchQuery.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: 'Clear search',
+                          onPressed: () {
+                            searchController.clear();
+                            onSearchChanged('');
+                          },
+                          icon: const Icon(Icons.close),
+                        ),
+                ),
               ),
+            ),
+            const SizedBox(width: 8),
+            Badge(
+              isLabelVisible: state.hasActiveCharacterFilters,
+              child: IconButton.filledTonal(
+                tooltip: 'Filter characters',
+                onPressed: onOpenFilters,
+                icon: const Icon(Icons.tune),
+              ),
+            ),
+            if (searchQuery.isNotEmpty ||
+                state.hasActiveCharacterFilters) ...[
+              const SizedBox(width: 4),
+              IconButton(
+                tooltip: 'Clear filters',
+                onPressed: onReset,
+                icon: const Icon(Icons.filter_alt_off),
+              ),
+            ],
           ],
         ),
       ),
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              if (state.isLoadingCharacters &&
-                  state.characters.isEmpty) {
+              if (state.isLoadingCharacters && state.characters.isEmpty) {
                 return CatalogSkeleton(
                   isGridView: isGridView,
                   columns: _gridColumns(constraints.maxWidth),
@@ -591,20 +560,30 @@ class _CharacterTab extends StatelessWidget {
 
               final columns = _gridColumns(constraints.maxWidth);
 
-              return CatalogResults<Character>(
-                items: state.characters,
-                isGridView: isGridView,
-                columns: columns,
-                gridAspectRatio: 0.66,
-                controller: scrollController,
-                isLoadingMore: state.isLoadingMoreCharacters,
-                onRefresh: onRetry,
-                itemBuilder: (context, character) {
-                  return isGridView
-                      ? _CharacterTile(character: character)
-                      : _CharacterListTile(character: character);
-                },
-              );
+              
+            return CatalogResults<Character>(
+                    items: displayedCharacters,
+                    isGridView: isGridView,
+                    columns: columns,
+                    gridAspectRatio: 0.66,
+                    controller: scrollController,
+                    isLoadingMore: state.isLoadingMoreCharacters,
+                    onRefresh: onRetry,
+                    itemBuilder: (context, character) {
+                      final key = ValueKey<int>(character.id);
+
+                      return isGridView
+                          ? _CharacterTile(
+                              key: key,
+                              character: character,
+                            )
+                          : _CharacterListTile(
+                              key: key,
+                              character: character,
+                            );
+                    },
+            );
+
             },
           ),
         ),
@@ -618,7 +597,6 @@ class _PlanetTab extends StatelessWidget {
   const _PlanetTab({
     required this.state,
     required this.isGridView,
-    required this.onViewChanged,
     required this.searchController,
     required this.searchQuery,
     required this.scrollController,
@@ -627,11 +605,11 @@ class _PlanetTab extends StatelessWidget {
     required this.onRetry,
     required this.onReset,
     required this.searchFocusNode,
+    required this.sortOrder,
   });
 
   final DragonBallState state;
   final bool isGridView;
-  final ValueChanged<bool> onViewChanged;
   final TextEditingController searchController;
   final String searchQuery;
   final ScrollController scrollController;
@@ -640,30 +618,69 @@ class _PlanetTab extends StatelessWidget {
   final Future<void> Function() onRetry;
   final VoidCallback onReset;
   final FocusNode searchFocusNode;
+  final String sortOrder;
 
   @override
   Widget build(BuildContext context) {
+
+  final displayedPlanets = [...state.planets];
+
+  switch (sortOrder) {
+    case 'name_asc':
+      displayedPlanets.sort(
+        (a, b) => a.name.toLowerCase().compareTo(
+              b.name.toLowerCase(),
+            ),
+      );
+      break;
+    case 'name_desc':
+      displayedPlanets.sort(
+        (a, b) => b.name.toLowerCase().compareTo(
+              a.name.toLowerCase(),
+            ),
+      );
+      break;
+  }
+
     return Column(
       children: [
+        if (state.isLoadingPlanets)
+          const LinearProgressIndicator(),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: TextField(
-            controller: searchController,
-            focusNode: searchFocusNode,
-            onChanged: onSearchChanged,
-            decoration: InputDecoration(
-              hintText: 'Search planets...',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: searchQuery.isEmpty
-                  ? null
-                  : IconButton(
-                      onPressed: () {
-                        searchController.clear();
-                        onSearchChanged('');
-                      },
-                      icon: const Icon(Icons.close),
-                    ),
-            ),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: searchController,
+                  focusNode: searchFocusNode,
+                  onChanged: onSearchChanged,
+                  decoration: InputDecoration(
+                    hintText: 'Search planets...',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: searchQuery.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: 'Clear search',
+                            onPressed: () {
+                              searchController.clear();
+                              onSearchChanged('');
+                            },
+                            icon: const Icon(Icons.close),
+                          ),
+                  ),
+                ),
+              ),
+              if (searchQuery.isNotEmpty ||
+                  state.hasActivePlanetFilters) ...[
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: 'Clear filters',
+                  onPressed: onReset,
+                  icon: const Icon(Icons.filter_alt_off),
+                ),
+              ],
+            ],
           ),
         ),
         Padding(
@@ -686,24 +703,6 @@ class _PlanetTab extends StatelessWidget {
                 selected: state.isDestroyedFilter == true,
                 onSelected: (_) => onDestroyedChanged(true),
               ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          child: Row(
-            children: [
-              ViewModeSelector(
-                isGridView: isGridView,
-                onChanged: onViewChanged,
-              ),
-              const Spacer(),
-              if (state.hasActivePlanetFilters)
-                TextButton.icon(
-                  onPressed: onReset,
-                  icon: const Icon(Icons.filter_alt_off, size: 18),
-                  label: const Text('Clear filters'),
-                ),
             ],
           ),
         ),
@@ -738,20 +737,30 @@ class _PlanetTab extends StatelessWidget {
 
               final columns = _gridColumns(constraints.maxWidth);
 
-              return CatalogResults<Planet>(
-                items: state.planets,
-                isGridView: isGridView,
-                columns: columns,
-                gridAspectRatio: 0.78,
-                controller: scrollController,
-                isLoadingMore: state.isLoadingMorePlanets,
-                onRefresh: onRetry,
-                itemBuilder: (context, planet) {
-                  return isGridView
-                      ? _PlanetTile(planet: planet)
-                      : _PlanetListTile(planet: planet);
-                },
-              );
+              
+            return CatalogResults<Planet>(
+                    items: displayedPlanets,
+                    isGridView: isGridView,
+                    columns: columns,
+                    gridAspectRatio: 0.78,
+                    controller: scrollController,
+                    isLoadingMore: state.isLoadingMorePlanets,
+                    onRefresh: onRetry,
+                    itemBuilder: (context, planet) {
+                      final key = ValueKey<int>(planet.id);
+
+                      return isGridView
+                          ? _PlanetTile(
+                              key: key,
+                              planet: planet,
+                            )
+                          : _PlanetListTile(
+                              key: key,
+                              planet: planet,
+                            );
+                    },
+            );
+
             },
           ),
         ),
@@ -762,7 +771,10 @@ class _PlanetTab extends StatelessWidget {
 
 
 class _CharacterTile extends StatelessWidget {
-  const _CharacterTile({required this.character});
+  const _CharacterTile({
+      super.key,
+      required this.character,
+    });
 
   final Character character;
 
@@ -864,7 +876,10 @@ class _CharacterTile extends StatelessWidget {
 
 
 class _CharacterListTile extends StatelessWidget {
-  const _CharacterListTile({required this.character});
+  const _CharacterListTile({
+    super.key,
+    required this.character,
+  });
 
   final Character character;
 
@@ -923,7 +938,10 @@ class _CharacterListTile extends StatelessWidget {
 }
 
 class _PlanetListTile extends StatelessWidget {
-  const _PlanetListTile({required this.planet});
+  const _PlanetListTile({
+    super.key,
+    required this.planet,
+  });
 
   final Planet planet;
 
@@ -987,7 +1005,10 @@ class _PlanetListTile extends StatelessWidget {
 
 
 class _PlanetTile extends StatelessWidget {
-  const _PlanetTile({required this.planet});
+  const _PlanetTile({
+    super.key,
+    required this.planet,
+  });
 
   final Planet planet;
 
@@ -1076,36 +1097,40 @@ class _PlanetTile extends StatelessWidget {
 class _FavoritesTab extends ConsumerWidget {
   const _FavoritesTab({
     required this.isGridView,
-    required this.onViewChanged,
     required this.onBrowseCharacters,
+    required this.sortOrder,
   });
 
   final bool isGridView;
-  final ValueChanged<bool> onViewChanged;
   final VoidCallback onBrowseCharacters;
+  final String sortOrder;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final favoriteIds = ref.watch(dragonBallFavoritesProvider);
-    final ids = favoriteIds.toList()..sort();
+    final ids = favoriteIds.toList();
+
+    switch (sortOrder) {
+      case 'id_asc':
+        ids.sort();
+        break;
+      case 'id_desc':
+        ids.sort((a, b) => b.compareTo(a));
+        break;
+    }
 
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Saved characters',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-              ViewModeSelector(
-                isGridView: isGridView,
-                onChanged: onViewChanged,
-              ),
-            ],
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Saved characters',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
           ),
         ),
         Expanded(

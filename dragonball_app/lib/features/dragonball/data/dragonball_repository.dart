@@ -266,72 +266,70 @@ class DragonBallRepository {
   }
 
 
-  /// Fetches JSON from the network and caches successful responses.
-  ///
-  /// If the request fails, a previously cached response is used when
-  /// available. The cache key includes the complete request URI.
-  Future<String> _requestBody(Uri uri) async {
-    final cacheKey = uri.toString();
 
+  /// Fetches a response from the API.
+  ///
+  /// Cache writes happen only after the response passes the expected
+  /// JSON/model parsing in _fetchFlexibleList or _fetchSingle.
+  ///
+  /// Network failures are returned to the caller instead of being
+  /// hidden by a cached response. The notifier can preserve existing
+  /// cached UI data while also reporting the failure.
+  Future<String> _requestBody(Uri uri) async {
     try {
       final response = await _client
           .get(uri)
           .timeout(const Duration(seconds: 20));
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        final cached = await _cache.read(cacheKey);
+        final status = response.statusCode;
 
-        if (cached != null) {
-          return cached.body;
-        }
+        final message = switch (status) {
+          400 => 'The request was invalid. Please check your filters.',
+          401 => 'Authentication is required to access this resource.',
+          403 => 'You do not have permission to access this resource.',
+          404 => 'The requested resource was not found.',
+          408 => 'The server timed out while processing the request.',
+          429 => 'Too many requests. Please wait and try again.',
+          >= 500 => 'The server encountered an error. Please try again.',
+          _ => 'The server returned HTTP $status.',
+        };
 
         throw _RepositoryRequestException(
-          ServerFailure(
-            'The server returned HTTP ${response.statusCode}.',
-            response.statusCode,
-          ),
+          ServerFailure(message, status),
         );
       }
-
-      // Cache only successful responses containing valid JSON.
-      await _cache.write(cacheKey, response.body);
 
       return response.body;
     } on _RepositoryRequestException {
       rethrow;
     } on SocketException {
-      final cached = await _cache.read(cacheKey);
-
-      if (cached != null) {
-        return cached.body;
-      }
-
       throw const _RepositoryRequestException(
-        NetworkFailure('No internet connection is available.'),
+        NetworkFailure(
+          'No internet connection. Check your connection and try again.',
+        ),
       );
     } on TimeoutException {
-      final cached = await _cache.read(cacheKey);
-
-      if (cached != null) {
-        return cached.body;
-      }
-
       throw const _RepositoryRequestException(
-        NetworkFailure('The request timed out. Try again.'),
+        NetworkFailure(
+          'The request timed out. Check your connection and try again.',
+        ),
+      );
+    } on http.ClientException {
+      throw const _RepositoryRequestException(
+        NetworkFailure(
+          'Could not connect to the server. Check your internet connection.',
+        ),
       );
     } catch (error) {
-      // Also attempt cache fallback for unexpected request failures.
-      final cached = await _cache.read(cacheKey);
-
-      if (cached != null) {
-        return cached.body;
-      }
-
       throw _RepositoryRequestException(
-        UnknownFailure('Could not fetch the response: $error'),
+        UnknownFailure(
+          'An unexpected network error occurred: $error',
+        ),
       );
     }
   }
+
 
   Future<Result<Page<T>, Failure>> _fetchFlexibleList<T>({
     required Uri uri,
@@ -342,21 +340,26 @@ class DragonBallRepository {
       final responseBody = await _requestBody(uri);
       final decoded = jsonDecode(responseBody);
 
+      
       if (decoded is List) {
         final items = decoded
             .map((entry) => parser(_toMap(entry)))
             .toList();
 
-        return Ok(
-          Page<T>(
-            items: List.unmodifiable(items),
-            currentPage: 1,
-            totalPages: 1,
-            hasNext: false,
-          ),
+        final page = Page<T>(
+          items: List.unmodifiable(items),
+          currentPage: 1,
+          totalPages: 1,
+          hasNext: false,
         );
+
+        await _cache.write(uri.toString(), responseBody);
+
+        return Ok(page);
       }
 
+
+      
       if (decoded is Map) {
         final body = _toMap(decoded);
 
@@ -368,23 +371,34 @@ class DragonBallRepository {
             ? _toMap(body['links'])
             : <String, dynamic>{};
 
-        final items = rawItems is List
-            ? rawItems.map((entry) => parser(_toMap(entry))).toList()
-            : <T>[];
+        if (rawItems is! List) {
+          return const Err(
+            ParseFailure(
+              'The API response does not contain a valid items list.',
+            ),
+          );
+        }
+
+        final items = rawItems
+            .map((entry) => parser(_toMap(entry)))
+            .toList();
 
         final current = _toInt(meta['currentPage'], currentPage);
         final total = _toInt(meta['totalPages'], 1);
         final nextLink = links['next']?.toString() ?? '';
 
-        return Ok(
-          Page<T>(
-            items: List.unmodifiable(items),
-            currentPage: current,
-            totalPages: total,
-            hasNext: nextLink.isNotEmpty || current < total,
-          ),
+        final page = Page<T>(
+          items: List.unmodifiable(items),
+          currentPage: current,
+          totalPages: total,
+          hasNext: nextLink.isNotEmpty || current < total,
         );
+
+        await _cache.write(uri.toString(), responseBody);
+
+        return Ok(page);
       }
+
 
       return const Err(
         ParseFailure('The API returned an unexpected JSON shape.'),
@@ -402,6 +416,7 @@ class DragonBallRepository {
     }
   }
 
+
   Future<Result<T, Failure>> _fetchSingle<T>(
     Uri uri,
     T Function(Map<String, dynamic>) parser,
@@ -416,7 +431,14 @@ class DragonBallRepository {
         );
       }
 
-      return Ok(parser(_toMap(decoded)));
+      // 1. Parse and validate the response first.
+      final value = parser(_toMap(decoded));
+
+      // 2. Cache only after parsing succeeds.
+      await _cache.write(uri.toString(), responseBody);
+
+      // 3. Return the validated model.
+      return Ok(value);
     } on _RepositoryRequestException catch (error) {
       return Err(error.failure);
     } on FormatException {
@@ -429,6 +451,7 @@ class DragonBallRepository {
       );
     }
   }
+
 
   Map<String, dynamic> _toMap(dynamic value) {
     if (value is Map<String, dynamic>) return value;

@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dragonball_app/core/result/result.dart';
+import 'package:dragonball_app/features/dragonball/presentation/full_screen_image_viewer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'planet_detail_view.dart';
@@ -76,22 +77,45 @@ class CharacterProfileView extends ConsumerWidget {
                   children: [
                     Padding(
                       padding: const EdgeInsets.all(12),
-                      child: Hero(
-                        tag: fromFavorites
-                            ? favoriteCharacterHeroTag(character.id)
-                            : characterHeroTag(character.id),
-                        child: CachedNetworkImage(
-                          imageUrl: character.imageUrl,
-                          fit: BoxFit.contain,
-                          placeholder: (_, __) => const Center(
-                            child: CircularProgressIndicator(),
-                          ),
-                          errorWidget: (_, __, ___) => const Icon(
-                            Icons.person,
-                            size: 80,
+                      child: GestureDetector(
+                        onTap: () {
+                          FocusManager.instance.primaryFocus?.unfocus();
+
+                          final tag = fromFavorites
+                              ? favoriteCharacterHeroTag(character.id)
+                              : characterHeroTag(character.id);
+
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => FullScreenImageViewer(
+                                images: [
+                                  FullScreenImageItem(
+                                    imageUrl: character.imageUrl,
+                                    heroTag: tag,
+                                    title: character.name,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                        child: Hero(
+                          tag: fromFavorites
+                              ? favoriteCharacterHeroTag(character.id)
+                              : characterHeroTag(character.id),
+                          child: CachedNetworkImage(
+                            imageUrl: character.imageUrl,
+                            fit: BoxFit.contain,
+                            placeholder: (_, __) => const Center(
+                              child: CircularProgressIndicator(),
+                            ),
+                            errorWidget: (_, __, ___) => const Icon(
+                              Icons.person,
+                              size: 80,
+                            ),
                           ),
                         ),
-                      )
+                      ),
                     ),
                     Positioned(
                       top: 8,
@@ -293,25 +317,31 @@ class _TransformationCarouselState
                             onTap: () {
                               Navigator.of(context).push(
                                 MaterialPageRoute<void>(
-                                  builder: (_) =>
-                                      TransformationGalleryScreen(
-                                    transformations: transformations,
+                                  builder: (_) => FullScreenImageViewer(
+                                    images: transformations.map((transformation) {
+                                      return FullScreenImageItem(
+                                        imageUrl: transformation.imageUrl,
+                                        heroTag:
+                                            'transformation-image-${transformation.imageUrl}',
+                                        title: transformation.name,
+                                      );
+                                    }).toList(),
                                     initialIndex: index,
                                   ),
                                 ),
                               );
                             },
                             child: Padding(
-                              padding: const EdgeInsets.all(8),
+                            padding: const EdgeInsets.all(8),
+                            child: Hero(
+                              tag: 'transformation-image-${transformation.imageUrl}',
                               child: CachedNetworkImage(
                                 imageUrl: transformation.imageUrl,
                                 fit: BoxFit.contain,
-                                placeholder: (_, __) =>
-                                    const Center(
+                                placeholder: (_, __) => const Center(
                                   child: CircularProgressIndicator(),
                                 ),
-                                errorWidget: (_, __, ___) =>
-                                    const Center(
+                                errorWidget: (_, __, ___) => const Center(
                                   child: Icon(
                                     Icons.broken_image_outlined,
                                     size: 40,
@@ -319,6 +349,7 @@ class _TransformationCarouselState
                                 ),
                               ),
                             ),
+                          ),
                           ),
                         ),
                         Positioned(

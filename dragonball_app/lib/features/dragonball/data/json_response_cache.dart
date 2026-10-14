@@ -21,6 +21,16 @@ class CachedJsonResponse {
   }
 }
 
+class JsonResponseCacheStats {
+  const JsonResponseCacheStats({
+    required this.fileCount,
+    required this.totalBytes,
+  });
+
+  final int fileCount;
+  final int totalBytes;
+}
+
 class JsonResponseCache {
   JsonResponseCache._();
 
@@ -30,6 +40,45 @@ class JsonResponseCache {
 
   Directory? _cacheDirectory;
 
+  Future<JsonResponseCacheStats> stats() async {
+    try {
+      final directory = await _getCacheDirectory();
+
+      if (!await directory.exists()) {
+        return const JsonResponseCacheStats(
+          fileCount: 0,
+          totalBytes: 0,
+        );
+      }
+
+      var count = 0;
+      var bytes = 0;
+
+      await for (final entity in directory.list(followLinks: false)) {
+        if (entity is! File || !entity.path.endsWith('.json')) {
+          continue;
+        }
+
+        try {
+          bytes += await entity.length();
+          count++;
+        } catch (_) {
+          // Ignore a file that disappears during the scan.
+        }
+      }
+
+      return JsonResponseCacheStats(
+        fileCount: count,
+        totalBytes: bytes,
+      );
+    } catch (_) {
+      return const JsonResponseCacheStats(
+        fileCount: 0,
+        totalBytes: 0,
+      );
+    }
+  }
+  
   Future<Directory> _getCacheDirectory() async {
     final existing = _cacheDirectory;
 
@@ -145,16 +194,18 @@ class JsonResponseCache {
   }
 
   Future<void> clear() async {
+    final directory = _cacheDirectory;
+
     try {
-      final directory = await _getCacheDirectory();
+      final target = directory ?? await _getCacheDirectory();
 
-      if (await directory.exists()) {
-        await directory.delete(recursive: true);
+      if (await target.exists()) {
+        await target.delete(recursive: true);
       }
-
-      _cacheDirectory = null;
     } catch (_) {
-      // Cache cleanup must not crash the application.
+      // Cache cleanup is best-effort.
+    } finally {
+      _cacheDirectory = null;
     }
   }
 }

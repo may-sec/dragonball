@@ -1,7 +1,7 @@
 name: dragonball_app
 description: A Dragon Ball Explorer demonstrating Riverpod and Flutter Hooks.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
-version: 1.0.0+1
+version: 1.0.0+3
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -30,16 +30,61 @@ dependencies:
   flutter_hooks: ^0.21.3+1
   shared_preferences: ^2.5.6
   crypto: ^3.0.7
+  flutter_cache_manager: ^3.4.5
+  package_info_plus: ^10.2.2
+  file_picker: ^13.1.0
+  share_plus: ^13.3.1
+  cross_file: ^0.3.5+5
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/dragonball-8.png"
+  remove_alpha_ios: true
+
+  adaptive_icon_background: "#FFFAF5"
+  adaptive_icon_foreground: "assets/dragonball-8.png"
+
+  web:
+    generate: true
+    image_path: "assets/dragonball-8.png"
+    background_color: "#FFFAF5"
+    theme_color: "#ED6C24"
+
+flutter_native_splash:
+  color: "#FFFAF5"
+  color_dark: "#171717"
+
+  image: "assets/dragonball-8.png"
+  image_dark: "assets/dragonball-8.png"
+
+  android: true
+  ios: true
+  web: false
+
+  android_12:
+    color: "#FFFAF5"
+    color_dark: "#171717"
+
+    image: "assets/dragonball-8.png"
+    image_dark: "assets/dragonball-8.png"
+
+    icon_background_color: "#FFFAF5"
+    icon_background_color_dark: "#171717"
+    
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
 
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash: ^2.4.8
 
 flutter:
   uses-material-design: true
   assets:
+    - assets/dragonball-8.png
     - .env
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg

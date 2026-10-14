@@ -27,6 +27,7 @@ final class DragonBallState {
     required this.isDestroyedFilter,
   });
 
+
   final List<Character> characters;
   final int characterCurrentPage;
   final bool hasNextCharacters;

@@ -9,6 +9,26 @@ import '../models/paginated_response.dart';
 import 'dragonball_state.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+
+final networkNoticeProvider =
+    NotifierProvider<NetworkNoticeController, String?>(
+  NetworkNoticeController.new,
+);
+
+class NetworkNoticeController extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void show(String message) {
+    state = message;
+  }
+
+  void clear() {
+    state = null;
+  }
+}
+
+
 final dragonBallRepositoryProvider =
     Provider<DragonBallRepository>((ref) {
   final client = http.Client();
@@ -108,27 +128,26 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
 
       // Start the network refresh after returning the cached state.
       Future<void>.delayed(Duration.zero, () async {
-        if (characterSequence == _characterRequestSequence) {
-          await _runCharacterRequest(
-            sequence: characterSequence,
-            replace: true,
-            request: () => repository.fetchCharacters(
-              page: 1,
-              limit: 10,
+        await Future.wait<void>([
+          if (characterSequence == _characterRequestSequence)
+            _runCharacterRequest(
+              sequence: characterSequence,
+              replace: true,
+              request: () => repository.fetchCharacters(
+                page: 1,
+                limit: 10,
+              ),
             ),
-          );
-        }
-
-        if (planetSequence == _planetRequestSequence) {
-          await _runPlanetRequest(
-            sequence: planetSequence,
-            replace: true,
-            request: () => repository.fetchPlanets(
-              page: 1,
-              limit: 10,
+          if (planetSequence == _planetRequestSequence)
+            _runPlanetRequest(
+              sequence: planetSequence,
+              replace: true,
+              request: () => repository.fetchPlanets(
+                page: 1,
+                limit: 10,
+              ),
             ),
-          );
-        }
+        ]);
       });
 
       return initialState.copyWith(
@@ -167,6 +186,8 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
       Err() => const Page<Planet>.empty(),
     };
 
+    
+
     return initialState.copyWith(
       characters: characterPage.items,
       characterCurrentPage: characterPage.currentPage,
@@ -198,6 +219,12 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
     }
   }
 
+  void _reportFailure(Failure failure) {
+    ref.read(networkNoticeProvider.notifier).show(failure.message);
+  }
+
+
+
   Future<void> _runCharacterRequest({
     required int sequence,
     required bool replace,
@@ -206,7 +233,7 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
     try {
       final result = await request();
 
-      // Only the latest character request owns the current state.
+      // Ignore outdated requests.
       if (sequence != _characterRequestSequence) return;
 
       _applyCharacterPage(
@@ -216,6 +243,12 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
     } catch (error) {
       if (sequence != _characterRequestSequence) return;
 
+      // Notify the UI about unexpected failures.
+      ref.read(networkNoticeProvider.notifier).show(
+        'An unexpected error occurred: $error',
+      );
+
+      // Stop loading and preserve existing results.
       _update(
         (s) => s.copyWith(
           isLoadingCharacters: false,
@@ -225,6 +258,7 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
       );
     }
   }
+
 
   Future<void> _runPlanetRequest({
   required int sequence,
@@ -243,6 +277,10 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
     );
   } catch (error) {
     if (sequence != _planetRequestSequence) return;
+
+    ref.read(networkNoticeProvider.notifier).show(
+      'An unexpected error occurred: $error',
+    );
 
     _update(
       (s) => s.copyWith(
@@ -397,6 +435,8 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
         );
 
       case Err(:final failure):
+        ref.read(networkNoticeProvider.notifier).show(failure.message);
+
         _update(
           (s) => s.copyWith(
             isLoadingCharacters: false,
@@ -549,9 +589,21 @@ class DragonBallFavoritesController extends Notifier<Set<int>> {
     _restoreFavorites();
   }
 
+  void replaceAll(Set<int> characterIds) {
+    final validIds = characterIds.where((id) => id > 0).toSet();
+
+    _loaded = true;
+    _restoreStarted = false;
+    _pendingToggles.clear();
+
+    state = Set<int>.unmodifiable(validIds);
+    _enqueueSave();
+  }
+
   Future<void> _restoreFavorites() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      if (_loaded) return;
 
       final savedIds = (prefs.getStringList(_storageKey) ?? const <String>[])
           .map(int.tryParse)
@@ -613,7 +665,7 @@ class DragonBallFavoritesController extends Notifier<Set<int>> {
   void _enqueueSave() {
     // Capture this state snapshot now. The queue guarantees snapshots
     // are written in the same order in which they were enqueued.
-    final ids = state.toList()..sort();
+    final ids = state.toList();
 
     _writeQueue = _writeQueue.then((_) async {
       try {
