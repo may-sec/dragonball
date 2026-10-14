@@ -1,322 +1,399 @@
-// lib/features/dragonball/presentation/dragonball_notifier.dart
-import 'package:dragonball_app/core/errors/failure.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+
+import '../../../core/errors/failure.dart';
 import '../../../core/result/result.dart';
 import '../data/dragonball_repository.dart';
 import '../models/dragonball_models.dart';
 import '../models/paginated_response.dart';
+import 'dragonball_state.dart';
 
-// Global provider exposing the DragonBallRepository instance.
-// Instantiates an http.Client and registers an onDispose hook to properly close
-// the client connection when the provider is destroyed, preventing resource leaks.
-final dbRepositoryProvider = Provider<DragonBallRepository>((ref) {
+final dragonBallRepositoryProvider =
+    Provider<DragonBallRepository>((ref) {
   final client = http.Client();
+
   ref.onDispose(client.close);
+
   return DragonBallRepository(client);
 });
 
-
-// Primary NotifierProvider binding DragonBallNotifier to DragonBallState.
-// Uses Dart constructor tear-off (`DragonBallNotifier.new`) for initialization.
-final dragonBallNotifierProvider =
-    NotifierProvider<DragonBallNotifier, DragonBallState>(
-  DragonBallNotifier.new,
+final dragonBallControllerProvider =
+    AsyncNotifierProvider<DragonBallController, DragonBallState>(
+  DragonBallController.new,
 );
 
-final class DragonBallState {
-  final bool isLoading;
-  final String? errorMessage;
+final dragonBallFavoritesProvider =
+    NotifierProvider<DragonBallFavoritesController, Set<int>>(
+  DragonBallFavoritesController.new,
+);
 
-  // Characters
-  final List<Character> characters;
-  final int characterCurrentPage;
-  final bool hasNextCharacters;
-  final bool isLoadingMoreCharacters;
-  
-  // Character Filters
-  final String searchName;
-  final String selectedGender;
-  final String selectedRace;
-  final String selectedAffiliation;
+final characterProfileProvider =
+    FutureProvider.family<CharacterProfile, int>((ref, id) async {
+  final repository = ref.watch(dragonBallRepositoryProvider);
+  final result = await repository.fetchCharacterProfile(id);
 
-  // Planets
-  final List<Planet> planets;
-  final int planetCurrentPage;
-  final bool hasNextPlanets;
-  final bool isLoadingMorePlanets;
+  return switch (result) {
+    Ok(:final value) => value,
+    Err(:final failure) => throw DragonBallRequestException(failure),
+  };
+});
 
-  // Planet Filters
-  final String planetSearchName;
-  final bool? isDestroyedFilter; // null = ALL, true = Destroyed, false = Intact
+final planetDetailProvider = FutureProvider.family<Planet, int>(
+  (ref, id) async {
+    final repository = ref.watch(dragonBallRepositoryProvider);
+    final result = await repository.fetchPlanetDetail(id);
 
-  const DragonBallState({
-    required this.isLoading,
-    required this.errorMessage,
-    required this.characters,
-    required this.characterCurrentPage,
-    required this.hasNextCharacters,
-    required this.isLoadingMoreCharacters,
-    required this.searchName,
-    required this.selectedGender,
-    required this.selectedRace,
-    required this.selectedAffiliation,
-    required this.planets,
-    required this.planetCurrentPage,
-    required this.hasNextPlanets,
-    required this.isLoadingMorePlanets,
-    required this.planetSearchName,
-    required this.isDestroyedFilter,
-  });
+    return switch (result) {
+      Ok(:final value) => value,
+      Err(:final failure) => throw DragonBallRequestException(failure),
+    };
+  },
+);
 
-  bool get hasActiveCharacterFilters =>
-      searchName.isNotEmpty ||
-      selectedGender != 'ALL' ||
-      selectedRace != 'ALL' ||
-      selectedAffiliation != 'ALL';
+final class DragonBallRequestException implements Exception {
+  const DragonBallRequestException(this.failure);
 
-  bool get hasActivePlanetFilters =>
-      planetSearchName.isNotEmpty || isDestroyedFilter != null;
+  final Failure failure;
 
-  factory DragonBallState.initial() => const DragonBallState(
-        isLoading: true,
-        errorMessage: null,
-        characters: [],
-        characterCurrentPage: 1,
-        hasNextCharacters: true,
-        isLoadingMoreCharacters: false,
-        searchName: '',
-        selectedGender: 'ALL',
-        selectedRace: 'ALL',
-        selectedAffiliation: 'ALL',
-        planets: [],
-        planetCurrentPage: 1,
-        hasNextPlanets: true,
-        isLoadingMorePlanets: false,
-        planetSearchName: '',
-        isDestroyedFilter: null,
-      );
-
-  DragonBallState copyWith({
-    bool? isLoading,
-    String? errorMessage,
-    List<Character>? characters,
-    int? characterCurrentPage,
-    bool? hasNextCharacters,
-    bool? isLoadingMoreCharacters,
-    String? searchName,
-    String? selectedGender,
-    String? selectedRace,
-    String? selectedAffiliation,
-    List<Planet>? planets,
-    int? planetCurrentPage,
-    bool? hasNextPlanets,
-    bool? isLoadingMorePlanets,
-    String? planetSearchName,
-    bool? Function()? isDestroyedFilter,
-  }) {
-    return DragonBallState(
-      isLoading: isLoading ?? this.isLoading,
-      errorMessage: errorMessage,
-      characters: characters ?? this.characters,
-      characterCurrentPage: characterCurrentPage ?? this.characterCurrentPage,
-      hasNextCharacters: hasNextCharacters ?? this.hasNextCharacters,
-      isLoadingMoreCharacters: isLoadingMoreCharacters ?? this.isLoadingMoreCharacters,
-      searchName: searchName ?? this.searchName,
-      selectedGender: selectedGender ?? this.selectedGender,
-      selectedRace: selectedRace ?? this.selectedRace,
-      selectedAffiliation: selectedAffiliation ?? this.selectedAffiliation,
-      planets: planets ?? this.planets,
-      planetCurrentPage: planetCurrentPage ?? this.planetCurrentPage,
-      hasNextPlanets: hasNextPlanets ?? this.hasNextPlanets,
-      isLoadingMorePlanets: isLoadingMorePlanets ?? this.isLoadingMorePlanets,
-      planetSearchName: planetSearchName ?? this.planetSearchName,
-      isDestroyedFilter: isDestroyedFilter != null ? isDestroyedFilter() : this.isDestroyedFilter,
-    );
-  }
+  @override
+  String toString() => failure.message;
 }
 
-class DragonBallNotifier extends Notifier<DragonBallState> {
-  // Reference to repository injected via ref.watch in build().
-  late final DragonBallRepository _repository;
+class DragonBallController extends AsyncNotifier<DragonBallState> {
+  int _characterRequestSequence = 0;
+  int _planetRequestSequence = 0;
 
-  // Lifecycle build method: called when provider is first initialized.
   @override
-  DragonBallState build() {
-    _repository = ref.watch(dbRepositoryProvider);
-    Future.microtask(loadInitial);
-    return DragonBallState.initial();
+  Future<DragonBallState> build() async {
+    // `watch` declares the repository as a provider dependency.
+    final repository = ref.watch(dragonBallRepositoryProvider);
+
+    final results = await Future.wait<Object>([
+      repository.fetchCharacters(page: 1, limit: 10),
+      repository.fetchPlanets(page: 1, limit: 10),
+    ]);
+
+    final characterResult =
+        results[0] as Result<Page<Character>, Failure>;
+    final planetResult =
+        results[1] as Result<Page<Planet>, Failure>;
+
+    final characterPage = switch (characterResult) {
+      Ok(:final value) => value,
+      Err() => const Page<Character>.empty(),
+    };
+
+    final planetPage = switch (planetResult) {
+      Ok(:final value) => value,
+      Err() => const Page<Planet>.empty(),
+    };
+
+    return DragonBallState.initial().copyWith(
+      characters: characterPage.items,
+      characterCurrentPage: characterPage.currentPage,
+      hasNextCharacters: characterPage.hasNext,
+      characterError: switch (characterResult) {
+        Ok() => null,
+        Err(:final failure) => failure.message,
+      },
+      planets: planetPage.items,
+      planetCurrentPage: planetPage.currentPage,
+      hasNextPlanets: planetPage.hasNext,
+      planetError: switch (planetResult) {
+        Ok() => null,
+        Err(:final failure) => failure.message,
+      },
+    );
   }
 
-  // Orchestrates parallel initial fetch of both characters and planets using Dart records.
-  Future<void> loadInitial() async {
-    state = state.copyWith(isLoading: true, errorMessage: null);
+  DragonBallState? get _current => state.asData?.value;
 
-    final (charResult, planetResult) = await (
-      _repository.fetchCharacters(page: 1, limit: 10),
-      _repository.fetchPlanets(page: 1, limit: 10),
-    ).wait;
+  void _update(
+    DragonBallState Function(DragonBallState current) transform,
+  ) {
+    final current = _current;
+    if (current != null) {
+      state = AsyncData(transform(current));
+    }
+  }
 
-    if (charResult case Err(:final failure)) {
-      state = state.copyWith(isLoading: false, errorMessage: failure.message);
+  Future<void> refresh() async {
+    final current = _current;
+
+    if (current == null) {
+      ref.invalidateSelf();
       return;
     }
 
-    final charData = (charResult as Ok<Page<Character>, Failure>).value;
-    final planetData = switch (planetResult) {
-      Ok(:final value) => value,
-      Err() => Page<Planet>.empty(),
-    };
+    final characterSequence = ++_characterRequestSequence;
+    final planetSequence = ++_planetRequestSequence;
 
-    state = state.copyWith(
-      isLoading: false,
-      characters: charData.items,
-      characterCurrentPage: charData.currentPage,
-      hasNextCharacters: charData.hasNext,
-      planets: planetData.items,
-      planetCurrentPage: planetData.currentPage,
-      hasNextPlanets: planetData.hasNext,
+    _update(
+      (s) => s.copyWith(
+        isLoadingCharacters: true,
+        isLoadingPlanets: true,
+        characterError: null,
+        planetError: null,
+      ),
     );
+
+    final results = await Future.wait<Object>([
+      _repository.fetchCharacters(
+        page: 1,
+        limit: 10,
+        name: current.searchName,
+        gender: current.selectedGender,
+        race: current.selectedRace,
+        affiliation: current.selectedAffiliation,
+      ),
+      _repository.fetchPlanets(
+        page: 1,
+        limit: 10,
+        name: current.planetSearchName,
+        isDestroyed: current.isDestroyedFilter,
+      ),
+    ]);
+
+    if (characterSequence == _characterRequestSequence) {
+      _applyCharacterPage(
+        results[0] as Result<Page<Character>, Failure>,
+        replace: true,
+      );
+    }
+
+    if (planetSequence == _planetRequestSequence) {
+      _applyPlanetPage(
+        results[1] as Result<Page<Planet>, Failure>,
+        replace: true,
+      );
+    }
   }
 
-  // Refetches characters when search or filter chips change
   Future<void> applyCharacterFilters({
     String? name,
     String? gender,
     String? race,
     String? affiliation,
   }) async {
-    final updatedState = state.copyWith(
-      searchName: name ?? state.searchName,
-      selectedGender: gender ?? state.selectedGender,
-      selectedRace: race ?? state.selectedRace,
-      selectedAffiliation: affiliation ?? state.selectedAffiliation,
-      isLoading: true,
-      errorMessage: null,
+    final current = _current;
+    if (current == null) return;
+
+    final next = current.copyWith(
+      searchName: name ?? current.searchName,
+      selectedGender: gender ?? current.selectedGender,
+      selectedRace: race ?? current.selectedRace,
+      selectedAffiliation: affiliation ?? current.selectedAffiliation,
+      isLoadingCharacters: true,
+      isLoadingMoreCharacters: false,
+      characterError: null,
     );
-    state = updatedState;
+
+    _update((_) => next);
+
+    final sequence = ++_characterRequestSequence;
 
     final result = await _repository.fetchCharacters(
       page: 1,
       limit: 10,
-      name: updatedState.searchName,
-      gender: updatedState.selectedGender,
-      race: updatedState.selectedRace,
-      affiliation: updatedState.selectedAffiliation,
+      name: next.searchName,
+      gender: next.selectedGender,
+      race: next.selectedRace,
+      affiliation: next.selectedAffiliation,
     );
 
-    switch (result) {
-      case Ok(:final value):
-        state = state.copyWith(
-          isLoading: false,
-          characters: value.items,
-          characterCurrentPage: value.currentPage,
-          hasNextCharacters: value.hasNext,
-        );
-      case Err(:final failure):
-        state = state.copyWith(
-          isLoading: false,
-          characters: [],
-          hasNextCharacters: false,
-          errorMessage: failure.message,
-        );
-    }
+    // Ignore a response if a newer search/filter has started.
+    if (sequence != _characterRequestSequence) return;
+
+    _applyCharacterPage(result, replace: true);
   }
 
   Future<void> applyPlanetFilters({
     String? name,
-    bool? Function()? isDestroyed,
+    bool? isDestroyedFilter,
+    bool clearDestroyedFilter = false,
   }) async {
-    final updatedState = state.copyWith(
-      planetSearchName: name ?? state.planetSearchName,
-      isDestroyedFilter: isDestroyed,
-      isLoading: true,
-      errorMessage: null,
+    final current = _current;
+    if (current == null) return;
+
+    final next = current.copyWith(
+      planetSearchName: name ?? current.planetSearchName,
+      isDestroyedFilter: clearDestroyedFilter
+          ? null
+          : (isDestroyedFilter ?? current.isDestroyedFilter),
+      isLoadingPlanets: true,
+      isLoadingMorePlanets: false,
+      planetError: null,
     );
-    state = updatedState;
+
+    _update((_) => next);
+
+    final sequence = ++_planetRequestSequence;
 
     final result = await _repository.fetchPlanets(
       page: 1,
       limit: 10,
-      name: updatedState.planetSearchName,
-      isDestroyed: updatedState.isDestroyedFilter,
+      name: next.planetSearchName,
+      isDestroyed: next.isDestroyedFilter,
     );
 
+    if (sequence != _planetRequestSequence) return;
+
+    _applyPlanetPage(result, replace: true);
+  }
+
+  void _applyCharacterPage(
+    Result<Page<Character>, Failure> result, {
+    required bool replace,
+  }) {
     switch (result) {
       case Ok(:final value):
-        state = state.copyWith(
-          isLoading: false,
-          planets: value.items,
-          planetCurrentPage: value.currentPage,
-          hasNextPlanets: value.hasNext,
+        _update(
+          (s) => s.copyWith(
+            characters: replace
+                ? value.items
+                : List.unmodifiable([...s.characters, ...value.items]),
+            characterCurrentPage: value.currentPage,
+            hasNextCharacters: value.hasNext,
+            isLoadingCharacters: false,
+            isLoadingMoreCharacters: false,
+            characterError: null,
+          ),
         );
+
       case Err(:final failure):
-        state = state.copyWith(
-          isLoading: false,
-          planets: [],
-          hasNextPlanets: false,
-          errorMessage: failure.message,
+        _update(
+          (s) => s.copyWith(
+            isLoadingCharacters: false,
+            isLoadingMoreCharacters: false,
+            characterError: failure.message,
+          ),
+        );
+    }
+  }
+
+  void _applyPlanetPage(
+    Result<Page<Planet>, Failure> result, {
+    required bool replace,
+  }) {
+    switch (result) {
+      case Ok(:final value):
+        _update(
+          (s) => s.copyWith(
+            planets: replace
+                ? value.items
+                : List.unmodifiable([...s.planets, ...value.items]),
+            planetCurrentPage: value.currentPage,
+            hasNextPlanets: value.hasNext,
+            isLoadingPlanets: false,
+            isLoadingMorePlanets: false,
+            planetError: null,
+          ),
+        );
+
+      case Err(:final failure):
+        _update(
+          (s) => s.copyWith(
+            isLoadingPlanets: false,
+            isLoadingMorePlanets: false,
+            planetError: failure.message,
+          ),
         );
     }
   }
 
   Future<void> loadNextCharacters() async {
-    // Stop if filtering is active (backend returns full list with no pagination)
-    if (state.hasActiveCharacterFilters) return;
-    if (!state.hasNextCharacters || state.isLoadingMoreCharacters) return;
+    final current = _current;
 
-    state = state.copyWith(isLoadingMoreCharacters: true);
-    final nextPage = state.characterCurrentPage + 1;
-    final result = await _repository.fetchCharacters(page: nextPage, limit: 10);
-
-    if (result case Ok(:final value)) {
-      state = state.copyWith(
-        characters: [...state.characters, ...value.items],
-        characterCurrentPage: value.currentPage,
-        hasNextCharacters: value.hasNext,
-        isLoadingMoreCharacters: false,
-      );
-    } else {
-      state = state.copyWith(isLoadingMoreCharacters: false);
+    if (current == null ||
+        current.hasActiveCharacterFilters ||
+        !current.hasNextCharacters ||
+        current.isLoadingCharacters ||
+        current.isLoadingMoreCharacters) {
+      return;
     }
+
+    _update(
+      (s) => s.copyWith(
+        isLoadingMoreCharacters: true,
+        characterError: null,
+      ),
+    );
+
+    final sequence = ++_characterRequestSequence;
+
+    final result = await _repository.fetchCharacters(
+      page: current.characterCurrentPage + 1,
+      limit: 10,
+    );
+
+    if (sequence != _characterRequestSequence) return;
+
+    _applyCharacterPage(result, replace: false);
   }
 
   Future<void> loadNextPlanets() async {
-    // Stop if filtering is active (backend returns full list with no pagination)
-    if (state.hasActivePlanetFilters) return;
-    if (!state.hasNextPlanets || state.isLoadingMorePlanets) return;
+    final current = _current;
 
-    state = state.copyWith(isLoadingMorePlanets: true);
-    final nextPage = state.planetCurrentPage + 1;
-    final result = await _repository.fetchPlanets(page: nextPage, limit: 10);
-
-    if (result case Ok(:final value)) {
-      state = state.copyWith(
-        planets: [...state.planets, ...value.items],
-        planetCurrentPage: value.currentPage,
-        hasNextPlanets: value.hasNext,
-        isLoadingMorePlanets: false,
-      );
-    } else {
-      state = state.copyWith(isLoadingMorePlanets: false);
+    if (current == null ||
+        current.hasActivePlanetFilters ||
+        !current.hasNextPlanets ||
+        current.isLoadingPlanets ||
+        current.isLoadingMorePlanets) {
+      return;
     }
+
+    _update(
+      (s) => s.copyWith(
+        isLoadingMorePlanets: true,
+        planetError: null,
+      ),
+    );
+
+    final sequence = ++_planetRequestSequence;
+
+    final result = await _repository.fetchPlanets(
+      page: current.planetCurrentPage + 1,
+      limit: 10,
+    );
+
+    if (sequence != _planetRequestSequence) return;
+
+    _applyPlanetPage(result, replace: false);
   }
 
   void resetCharacterFilters() {
-    applyCharacterFilters(name: '', gender: 'ALL', race: 'ALL', affiliation: 'ALL');
+    applyCharacterFilters(
+      name: '',
+      gender: 'ALL',
+      race: 'ALL',
+      affiliation: 'ALL',
+    );
   }
 
   void resetPlanetFilters() {
-    applyPlanetFilters(name: '', isDestroyed: () => null);
+    applyPlanetFilters(
+      name: '',
+      clearDestroyedFilter: true,
+    );
   }
+
+  DragonBallRepository get _repository =>
+      ref.read(dragonBallRepositoryProvider);
 }
 
-final CharacterProfileProvider =
-    FutureProvider.family<CharacterProfile, int>((ref, id) async {
-  final repo = ref.watch(dbRepositoryProvider);
-  final result = await repo.fetchCharacterProfile(id);
-  return switch (result) {
-    Ok(:final value) => value,
-    Err(:final failure) => throw Exception(failure.message),
-  };
-});
+class DragonBallFavoritesController extends Notifier<Set<int>> {
+  @override
+  Set<int> build() => const <int>{};
+
+  void toggle(int characterId) {
+    final next = Set<int>.of(state);
+
+    if (!next.add(characterId)) {
+      next.remove(characterId);
+    }
+
+    state = Set<int>.unmodifiable(next);
+  }
+
+  bool contains(int characterId) => state.contains(characterId);
+}

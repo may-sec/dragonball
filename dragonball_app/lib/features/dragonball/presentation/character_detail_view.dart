@@ -1,110 +1,491 @@
-// lib/features/dragonball/presentation/character_detail_view.dart
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import 'planet_detail_view.dart';
 import 'dragonball_notifier.dart';
+import '../models/dragonball_models.dart';
 
 class CharacterProfileView extends ConsumerWidget {
-  final int characterId;
+  const CharacterProfileView({
+    super.key,
+    required this.characterId,
+  });
 
-  const CharacterProfileView({super.key, required this.characterId});
+  final int characterId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final detailAsync = ref.watch(CharacterProfileProvider(characterId));
+    final profileAsync = ref.watch(
+      characterProfileProvider(characterId),
+    );
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Character File')),
-      body: detailAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator.adaptive()),
-        error: (error, _) => Center(child: Text('Error: $error')),
-        data: (character) => SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+      appBar: AppBar(title: const Text('Character dossier')),
+      body: profileAsync.when(
+        loading: () => const Center(
+          child: CircularProgressIndicator.adaptive(),
+        ),
+        error: (error, _) => Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.cloud_off, size: 48),
+                const SizedBox(height: 12),
+                Text(error.toString(), textAlign: TextAlign.center),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: () {
+                    ref.invalidate(characterProfileProvider(characterId));
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Try again'),
+                ),
+              ],
+            ),
+          ),
+        ),
+        data: (character) => RefreshIndicator(
+          onRefresh: () =>
+            ref.refresh(characterProfileProvider(characterId).future),
+          child: ListView(
+            padding: const EdgeInsets.all(20),
             children: [
-              Center(
-                child: SizedBox(
-                  height: 240,
+              Container(
+                height: 280,
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainer,
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Hero(
+                  tag: 'character-${character.id}',
                   child: CachedNetworkImage(
                     imageUrl: character.imageUrl,
                     fit: BoxFit.contain,
+                    placeholder: (_, __) => const Center(
+                      child: CircularProgressIndicator(),
+                    ),
+                    errorWidget: (_, __, ___) => const Icon(
+                      Icons.person,
+                      size: 80,
+                    ),
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
-              Text(character.name, style: Theme.of(context).textTheme.headlineMedium),
-              Text('Max Ki: ${character.maxKi}', style: const TextStyle(fontWeight: FontWeight.bold)),
-              const Divider(height: 32),
-              Text(character.description),
               const SizedBox(height: 20),
-
-              // Origin Planet Tile
-              if (character.originPlanet != null) ...[
-                Text('Origin Planet', style: Theme.of(context).textTheme.titleMedium),
-                Card(
-                  margin: const EdgeInsets.symmetric(vertical: 8),
-                  child: ListTile(
-                    leading: SizedBox(
-                      width: 40,
-                      height: 40,
-                      child: CachedNetworkImage(
-                        imageUrl: character.originPlanet!.imageUrl,
-                        fit: BoxFit.cover,
-                      ),
+              Text(
+                character.name,
+                style: Theme.of(context).textTheme.headlineMedium,
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  Chip(label: Text(character.race)),
+                  Chip(label: Text(character.gender)),
+                  Chip(label: Text(character.affiliation)),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _StatCard(
+                      label: 'Current Ki',
+                      value: character.ki,
                     ),
-                    title: Text(character.originPlanet!.name),
-                    subtitle: Text(
-                      character.originPlanet!.isDestroyed ? 'Destroyed' : 'Active',
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _StatCard(
+                      label: 'Maximum Ki',
+                      value: character.maxKi,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'About',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                character.description.isEmpty
+                    ? 'No description is available.'
+                    : character.description,
+                style: Theme.of(context).textTheme.bodyLarge,
+              ),
+              if (character.originPlanet != null) ...[
+                const SizedBox(height: 28),
+                Text(
+                  'Origin planet',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 12),
+                InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: () {
+                    final planet = character.originPlanet!;
+
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => PlanetDetailView(
+                          planetId: planet.id,
+                        ),
+                      ),
+                    );
+                  },
+                  child: Card(
+                    clipBehavior: Clip.antiAlias,
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.all(12),
+                      leading: SizedBox(
+                        width: 56,
+                        height: 56,
+                        child: CachedNetworkImage(
+                          imageUrl: character.originPlanet!.imageUrl,
+                          fit: BoxFit.contain,
+                          errorWidget: (_, __, ___) =>
+                              const Icon(Icons.public),
+                        ),
+                      ),
+                      title: Text(character.originPlanet!.name),
+                      subtitle: Text(
+                        character.originPlanet!.isDestroyed
+                            ? 'Destroyed'
+                            : 'Intact',
+                      ),
+                      trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
               ],
-
-              // Transformations Gallery
               if (character.transformations.isNotEmpty) ...[
-                Text('Transformations (${character.transformations.length})',
-                    style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                SizedBox(
-                  height: 160,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: character.transformations.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 12),
-                    itemBuilder: (context, index) {
-                      final trans = character.transformations[index];
-                      return SizedBox(
-                        width: 110,
-                        child: Column(
-                          children: [
-                            Expanded(
-                              child: CachedNetworkImage(
-                                imageUrl: trans.imageUrl,
-                                fit: BoxFit.contain,
+                const SizedBox(height: 28),
+                Text(
+                  'Transformations',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 12),
+                Stack(
+                  children: [
+                    SizedBox(
+                      height: 260,
+                      width: double.infinity,
+                      child: PageView.builder(
+                        itemCount: character.transformations.length,
+                        itemBuilder: (context, index) {
+                          final transformation = character.transformations[index];
+
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            child: Card(
+                              clipBehavior: Clip.antiAlias,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(
+                                    child: CachedNetworkImage(
+                                      imageUrl: transformation.imageUrl,
+                                      width: double.infinity,
+                                      fit: BoxFit.contain,
+                                      placeholder: (context, url) => const Center(
+                                        child: CircularProgressIndicator(),
+                                      ),
+                                      errorWidget: (context, url, error) =>
+                                          const Center(
+                                        child: Icon(
+                                          Icons.broken_image_outlined,
+                                          size: 40,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Text(
+                                      transformation.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(context).textTheme.titleMedium,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              trans.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                            Text(
-                              trans.ki,
-                              style: const TextStyle(fontSize: 10, color: Colors.grey),
-                            ),
-                          ],
+                          );
+                        },
+                      ),
+                    ),
+
+                    // Full-screen button in the bottom-right corner.
+                    Positioned(
+                      right: 14,
+                      bottom: 14,
+                      child: IconButton.filled(
+                        tooltip: 'Open full-screen gallery',
+                        style: IconButton.styleFrom(
+                          backgroundColor: Theme.of(context).colorScheme.primary,
+                          foregroundColor: Theme.of(context).colorScheme.onPrimary,
                         ),
-                      );
-                    },
-                  ),
+                        icon: const Icon(Icons.fullscreen_rounded),
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => TransformationGalleryScreen(
+                                transformations: character.transformations,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ),
+
               ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+
+class TransformationGalleryScreen extends StatefulWidget {
+  const TransformationGalleryScreen({
+    super.key,
+    required this.transformations,
+    this.initialIndex = 0,
+  });
+
+  final List<Transformation> transformations;
+  final int initialIndex;
+
+  @override
+  State<TransformationGalleryScreen> createState() =>
+      _TransformationGalleryScreenState();
+}
+
+class _TransformationGalleryScreenState
+    extends State<TransformationGalleryScreen> {
+  late final PageController _pageController;
+  late int _currentIndex;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _currentIndex = widget.initialIndex;
+
+    _pageController = PageController(
+      initialPage: widget.initialIndex,
+    );
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  
+  @override
+  Widget build(BuildContext context) {
+    if (widget.transformations.isEmpty) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF090B12),
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF090B12),
+          foregroundColor: Colors.white,
+          title: const Text('Transformations'),
+        ),
+        body: const Center(
+          child: Text(
+            'No transformations available.',
+            style: TextStyle(color: Colors.white),
+          ),
+        ),
+      );
+    }
+
+    final transformation = widget.transformations[_currentIndex];
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF090B12),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 4,
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton.filledTonal(
+                    tooltip: 'Close gallery',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                  Text(
+                    '${_currentIndex + 1} / ${widget.transformations.length}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: widget.transformations.length,
+                onPageChanged: (index) {
+                  setState(() => _currentIndex = index);
+                },
+                itemBuilder: (context, index) {
+                  final item = widget.transformations[index];
+
+                  return Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Center(
+                      child: CachedNetworkImage(
+                        imageUrl: item.imageUrl,
+                        fit: BoxFit.contain,
+                        placeholder: (_, __) => const Center(
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                          ),
+                        ),
+                        errorWidget: (_, __, error) => const Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.broken_image_outlined,
+                              color: Colors.white70,
+                              size: 64,
+                            ),
+                            SizedBox(height: 12),
+                            Text(
+                              'Image could not be loaded',
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                20,
+                12,
+                20,
+                MediaQuery.paddingOf(context).bottom + 20,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    transformation.name,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context)
+                        .textTheme
+                        .headlineSmall
+                        ?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      IconButton.filledTonal(
+                        tooltip: 'Previous transformation',
+                        onPressed: _currentIndex > 0
+                            ? () => _pageController.previousPage(
+                                  duration: const Duration(milliseconds: 300),
+                                  curve: Curves.easeOutCubic,
+                                )
+                            : null,
+                        icon: const Icon(Icons.chevron_left_rounded),
+                      ),
+                      Expanded(
+                        child: Text(
+                          'Swipe to explore transformations',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: Colors.white70),
+                        ),
+                      ),
+                      IconButton.filledTonal(
+                        tooltip: 'Next transformation',
+                        onPressed: _currentIndex <
+                                widget.transformations.length - 1
+                            ? () => _pageController.nextPage(
+                                  duration: const Duration(milliseconds: 300),
+                                  curve: Curves.easeOutCubic,
+                                )
+                            : null,
+                        icon: const Icon(Icons.chevron_right_rounded),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+class _StatCard extends StatelessWidget {
+  const _StatCard({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Theme.of(context).colorScheme.surfaceContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: Theme.of(context).textTheme.labelMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              value,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ],
         ),
       ),
     );

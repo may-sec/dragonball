@@ -1,26 +1,19 @@
-// lib/features/dragonball/data/dragonball_repository.dart
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:http/http.dart' as http;
+
 import '../../../core/errors/failure.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../../core/result/result.dart';
 import '../models/dragonball_models.dart';
 import '../models/paginated_response.dart';
 
-final class DragonBallRepository {
-  final http.Client _client;
-  const DragonBallRepository(this._client);
+class DragonBallRepository {
+  DragonBallRepository(this._client);
 
-  // Route 1: Browse & Filter Characters
-  // Fetches a paginated or filtered list of characters from the backend.
-  // Parameters:
-  // - `page`: Target page number for pagination (defaults to 1).
-  // - `limit`: Number of items requested per page (defaults to 10).
-  // - `name`: Optional search substring to filter by character name.
-  // - `gender`: Optional gender filter ('Male', 'Female', 'Unknown', or 'ALL').
-  // - `race`: Optional race filter ('Saiyan', 'Human', etc., or 'ALL').
-  // - `affiliation`: Optional faction filter ('Z Fighter', etc., or 'ALL').
+  final http.Client _client;
 
   Future<Result<Page<Character>, Failure>> fetchCharacters({
     int page = 1,
@@ -30,111 +23,111 @@ final class DragonBallRepository {
     String? race,
     String? affiliation,
   }) async {
+    final query = <String, String>{};
 
-    final queryParams = <String, String>{};
-
-    if (name != null && name.trim().isNotEmpty) queryParams['name'] = name.trim();
-    if (gender != null && gender != 'ALL') queryParams['gender'] = gender;
-    if (race != null && race != 'ALL') queryParams['race'] = race;
-    if (affiliation != null && affiliation != 'ALL') queryParams['affiliation'] = affiliation;
-
-    final isFiltered = queryParams.isNotEmpty;
-
-    // CRITICAL API BEHAVIOR WORKAROUND:
-    // The Dragon Ball API returns a flat JSON Array `[...]` when filters (name/race/etc.) are passed,
-    // but returns an envelope object `{"items": [...], "meta": {...}}` only when querying pagination.
-    // If filters are active, passing page/limit can cause API rejections, so only paginate unfiltered queries.
-    if (!isFiltered) {
-      queryParams['page'] = '$page';
-      queryParams['limit'] = '$limit';
+    if (name != null && name.trim().isNotEmpty) {
+      query['name'] = name.trim();
     }
 
-    final uri = ApiEndpoints.characters(queryParams);
+    if (gender != null && gender != 'ALL') {
+      query['gender'] = gender;
+    }
 
-  // Dispatches the network call and parses through the polymorphic response handler.
-    return _fetchFlexibleList(
-      uri: uri,
+    if (race != null && race != 'ALL') {
+      query['race'] = race;
+    }
+
+    if (affiliation != null && affiliation != 'ALL') {
+      query['affiliation'] = affiliation;
+    }
+
+    // The API may return a flat array when filters are active.
+    // Only unfiltered browsing requests use page and limit.
+    if (query.isEmpty) {
+      query['page'] = '$page';
+      query['limit'] = '$limit';
+    }
+
+    return _fetchFlexibleList<Character>(
+      uri: ApiEndpoints.characters(query),
       currentPage: page,
-      parser: (json) => Character.fromJson(json),
+      parser: Character.fromJson,
     );
   }
 
-  // Route 3: Browse & Filter Planets
-  // Fetches a paginated or filtered list of planets from the backend.
-  // Parameters:
-  // - `page`: Target page number for pagination (defaults to 1).
-  // - `limit`: Number of items requested per page (defaults to 10).
-  // - `name`: Optional search substring to filter by planet name.
-  // - `isDestroyed`: Optional boolean flag filtering by destruction status (null = all).
   Future<Result<Page<Planet>, Failure>> fetchPlanets({
     int page = 1,
     int limit = 10,
     String? name,
     bool? isDestroyed,
   }) async {
-    final queryParams = <String, String>{};
+    final query = <String, String>{};
 
-    if (name != null && name.trim().isNotEmpty) queryParams['name'] = name.trim();
-    if (isDestroyed != null) queryParams['isDestroyed'] = '$isDestroyed';
-
-    final isFiltered = queryParams.isNotEmpty;
-
-    if (!isFiltered) {
-      queryParams['page'] = '$page';
-      queryParams['limit'] = '$limit';
+    if (name != null && name.trim().isNotEmpty) {
+      query['name'] = name.trim();
     }
 
-    final uri = ApiEndpoints.planets(queryParams);
+    if (isDestroyed != null) {
+      query['isDestroyed'] = '$isDestroyed';
+    }
 
-    return _fetchFlexibleList(
-      uri: uri,
+    if (query.isEmpty) {
+      query['page'] = '$page';
+      query['limit'] = '$limit';
+    }
+
+    return _fetchFlexibleList<Planet>(
+      uri: ApiEndpoints.planets(query),
       currentPage: page,
-      parser: (json) => Planet.fromJson(json),
+      parser: Planet.fromJson,
     );
   }
 
-  Future<Result<CharacterProfile, Failure>> fetchCharacterProfile(int id) async {
+  Future<Result<CharacterProfile, Failure>> fetchCharacterProfile(
+    int id,
+  ) {
     return _fetchSingle(
-      ApiEndpoints.CharacterProfile(id),
-      (json) => CharacterProfile.fromJson(json),
+      ApiEndpoints.characterProfile(id),
+      CharacterProfile.fromJson,
     );
   }
 
-  Future<Result<Planet, Failure>> fetchPlanetDetail(int id) async {
+  Future<Result<Planet, Failure>> fetchPlanetDetail(int id) {
     return _fetchSingle(
       ApiEndpoints.planetDetail(id),
-      (json) => Planet.fromJson(json),
+      Planet.fromJson,
     );
   }
 
-  // Private Helper 1: Polymorphic Flexible List Deserializer
-
-  // Polymorphic helper method parsing two distinct API response formats:
-  // 1. Flat List: Returned when searching by filter parameters (e.g., `[{...}, {...}]`).
-  // 2. Map with Envelope: Returned on paginated browse calls (e.g., `{"items": [...], "meta": {...}}`).
-  // Generic parameter `<T>` represents the target entity type (Character or Planet).
   Future<Result<Page<T>, Failure>> _fetchFlexibleList<T>({
     required Uri uri,
     required int currentPage,
     required T Function(Map<String, dynamic>) parser,
   }) async {
     try {
-      final response = await _client.get(uri);
-      if (response.statusCode != 200) {
-        return Err(ServerFailure('Server returned rejection', response.statusCode));
+      final response = await _client
+          .get(uri)
+          .timeout(const Duration(seconds: 20));
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return Err(
+          ServerFailure(
+            'The server returned HTTP ${response.statusCode}.',
+            response.statusCode,
+          ),
+        );
       }
 
-      // Deserializes the raw response body string into dynamic Dart data structures.
       final decoded = jsonDecode(response.body);
 
-      // Branch 1: The response is a flat JSON Array (typical when filters are applied).
-
       if (decoded is List) {
+        final items = decoded
+            .map((entry) => parser(_toMap(entry)))
+            .toList();
+
         return Ok(
           Page<T>(
-            // Maps each item in the raw array through the provided parser closure.
-            items: decoded.map((item) => parser(item as Map<String, dynamic>)).toList(),
-            // When filtering, the API returns all matching results in a single flat list.
+            items: List.unmodifiable(items),
             currentPage: 1,
             totalPages: 1,
             hasNext: false,
@@ -142,52 +135,117 @@ final class DragonBallRepository {
         );
       }
 
-      // Branch 2: The response is an enveloped JSON Object (standard paginated response).
-      if (decoded is Map<String, dynamic>) {
-        final rawItems = decoded['items'] as List<dynamic>? ?? [];
-        final meta = decoded['meta'] as Map<String, dynamic>? ?? {};
-        final links = decoded['links'] as Map<String, dynamic>? ?? {};
+      if (decoded is Map) {
+        final body = _toMap(decoded);
+
+        final rawItems = body['items'];
+        final meta = body['meta'] is Map
+            ? _toMap(body['meta'])
+            : <String, dynamic>{};
+        final links = body['links'] is Map
+            ? _toMap(body['links'])
+            : <String, dynamic>{};
+
+        final items = rawItems is List
+            ? rawItems.map((entry) => parser(_toMap(entry))).toList()
+            : <T>[];
+
+        final current = _toInt(meta['currentPage'], currentPage);
+        final total = _toInt(meta['totalPages'], 1);
+        final nextLink = links['next']?.toString() ?? '';
 
         return Ok(
           Page<T>(
-            // Maps each dynamic entry in rawItems into the typed domain entity.
-            items: rawItems.map((e) => parser(e as Map<String, dynamic>)).toList(),
-            currentPage: meta['currentPage'] as int? ?? currentPage,
-            totalPages: meta['totalPages'] as int? ?? 1,
-            hasNext: (links['next'] as String? ?? '').isNotEmpty,
+            items: List.unmodifiable(items),
+            currentPage: current,
+            totalPages: total,
+            hasNext: nextLink.isNotEmpty || current < total,
           ),
         );
       }
 
-      // Fallback if the returned JSON is neither a List nor a Map.
-      return const Err(ParseFailure('Unexpected response shape received from API'));
+      return const Err(
+        ParseFailure('The API returned an unexpected JSON shape.'),
+      );
     } on SocketException {
-      // Intercepts transport-level connectivity errors (offline, DNS failures, connection drops).
-      return const Err(NetworkFailure('No active internet connection.'));
-    } catch (e) {
-      // Intercepts JSON parsing or type-casting exceptions.
-      return Err(ParseFailure('Error processing response: $e'));
+      return const Err(
+        NetworkFailure('No internet connection is available.'),
+      );
+    } on TimeoutException {
+      return const Err(
+        NetworkFailure('The request timed out. Try again.'),
+      );
+    } on FormatException {
+      return const Err(
+        ParseFailure('The API response was not valid JSON.'),
+      );
+    } catch (error) {
+      return Err(
+        UnknownFailure('Could not process the response: $error'),
+      );
     }
   }
 
-  // Private Helper 2: Single Entity Deserializer
-  // Generic private helper for retrieving and parsing a single entity by URI.
-  // Parameter `<T>` represents the target entity type (e.g., CharacterProfile or Planet).
   Future<Result<T, Failure>> _fetchSingle<T>(
     Uri uri,
     T Function(Map<String, dynamic>) parser,
   ) async {
     try {
-      final response = await _client.get(uri);
-      if (response.statusCode != 200) {
-        return Err(ServerFailure('Server rejection', response.statusCode));
+      final response = await _client
+          .get(uri)
+          .timeout(const Duration(seconds: 20));
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return Err(
+          ServerFailure(
+            'The server returned HTTP ${response.statusCode}.',
+            response.statusCode,
+          ),
+        );
       }
-      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-      return Ok(parser(decoded));
+
+      final decoded = jsonDecode(response.body);
+
+      if (decoded is! Map) {
+        return const Err(
+          ParseFailure('The API returned an unexpected JSON shape.'),
+        );
+      }
+
+      return Ok(parser(_toMap(decoded)));
     } on SocketException {
-      return const Err(NetworkFailure('No active internet connection.'));
-    } catch (e) {
-      return Err(ParseFailure('Failed to fetch details: $e'));
+      return const Err(
+        NetworkFailure('No internet connection is available.'),
+      );
+    } on TimeoutException {
+      return const Err(
+        NetworkFailure('The request timed out. Try again.'),
+      );
+    } on FormatException {
+      return const Err(
+        ParseFailure('The API response was not valid JSON.'),
+      );
+    } catch (error) {
+      return Err(
+        UnknownFailure('Could not process the response: $error'),
+      );
     }
+  }
+
+  Map<String, dynamic> _toMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+
+    if (value is Map) {
+      return value.map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+    }
+
+    throw const FormatException('Expected a JSON object.');
+  }
+
+  int _toInt(dynamic value, int fallback) {
+    if (value is int) return value;
+    return int.tryParse(value?.toString() ?? '') ?? fallback;
   }
 }
