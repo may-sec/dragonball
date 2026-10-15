@@ -1,7 +1,7 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dragonball_app/features/dragonball/presentation/app_settings.dart';
 import 'package:dragonball_app/features/dragonball/presentation/character_filter_sheet.dart';
 import 'package:dragonball_app/features/dragonball/presentation/settings_screen.dart';
+import 'package:dragonball_app/widgets/build_character_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -798,16 +798,14 @@ class _CharacterTile extends StatelessWidget {
                     padding: const EdgeInsets.all(8),
                     child: Hero(
                       tag: characterHeroTag(character.id),
-                      child: CachedNetworkImage(
-                        imageUrl: character.imageUrl,
+                      child: buildCharacterImage(
+                        character.imageUrl,
                         fit: BoxFit.contain,
-                        placeholder: (_, __) => const Center(
+                        placeholder: const Center(
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
-                        errorWidget: (_, __, ___) => const Icon(
-                          Icons.person_outline,
-                          size: 42,
-                        ),
+                        showLoadingIndicator: true,
+                        errorWidget: const Icon(Icons.person_outline, size: 42),
                       ),
                     ),
                   ),
@@ -899,14 +897,14 @@ class _CharacterListTile extends StatelessWidget {
           height: 76,
           child: Hero(
             tag: characterHeroTag(character.id),
-            child: CachedNetworkImage(
-              imageUrl: character.imageUrl,
+            child: buildCharacterImage(
+              character.imageUrl,
               fit: BoxFit.contain,
-              placeholder: (_, __) => const Center(
+              placeholder: const Center(
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
-              errorWidget: (_, __, ___) =>
-                  const Icon(Icons.person_outline),
+              showLoadingIndicator: true,
+              errorWidget: const Icon(Icons.person_outline, size: 42),
             ),
           ),
         ),
@@ -960,11 +958,10 @@ class _PlanetListTile extends StatelessWidget {
         leading: SizedBox(
           width: 64,
           height: 64,
-          child: CachedNetworkImage(
-            imageUrl: planet.imageUrl,
+          child: buildCharacterImage(
+            planet.imageUrl,
             fit: BoxFit.contain,
-            errorWidget: (_, __, ___) =>
-                const Icon(Icons.public_off),
+            errorWidget: const Icon(Icons.public_off),
           ),
         ),
         title: Text(
@@ -1036,13 +1033,13 @@ class _PlanetTile extends StatelessWidget {
               child: Container(
                 color: colorScheme.surfaceContainer,
                 padding: const EdgeInsets.all(12),
-                child: CachedNetworkImage(
-                  imageUrl: planet.imageUrl,
+                child: buildCharacterImage(
+                  planet.imageUrl,
                   fit: BoxFit.contain,
-                  placeholder: (_, __) => const Center(
+                  placeholder: const Center(
                     child: Icon(Icons.public, size: 36),
                   ),
-                  errorWidget: (_, __, ___) => const Center(
+                  errorWidget: const Center(
                     child: Icon(Icons.public_off, size: 36),
                   ),
                 ),
@@ -1229,11 +1226,14 @@ class _FavoriteCharacterListTile extends ConsumerWidget {
             height: 64,
             child: Hero(
               tag: favoriteCharacterHeroTag(character.id),
-              child: CachedNetworkImage(
-                imageUrl: character.imageUrl,
+              child: buildCharacterImage(
+                character.imageUrl,
                 fit: BoxFit.contain,
-                errorWidget: (_, __, ___) =>
-                    const Icon(Icons.person_outline),
+                placeholder: const Center(
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                showLoadingIndicator: true,
+                errorWidget: const Icon(Icons.person_outline, size: 42),
               ),
             ),
           ),
@@ -1331,14 +1331,14 @@ class _FavoriteCharacterListTile extends ConsumerWidget {
                           padding: const EdgeInsets.all(8),
                           child: Hero(
                             tag: favoriteCharacterHeroTag(character.id),
-                            child: CachedNetworkImage(
-                              imageUrl: character.imageUrl,
+                            child: buildCharacterImage(
+                              character.imageUrl,
                               fit: BoxFit.contain,
-                              placeholder: (context, url) => const Center(
-                                child: CircularProgressIndicator(),
+                              placeholder: const Center(
+                                child: CircularProgressIndicator(strokeWidth: 2),
                               ),
-                              errorWidget: (context, url, error) =>
-                                  const Icon(Icons.person, size: 48),
+                              showLoadingIndicator: true,
+                              errorWidget: const Icon(Icons.person_outline, size: 42),
                             ),
                           )
                         ),

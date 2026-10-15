@@ -1,6 +1,9 @@
-import 'package:cached_network_image/cached_network_image.dart';
+import 'dart:async';
+
 import 'package:dragonball_app/core/result/result.dart';
 import 'package:dragonball_app/features/dragonball/presentation/full_screen_image_viewer.dart';
+import 'package:dragonball_app/widgets/build_character_image.dart';
+import 'package:dragonball_app/widgets/image_preloader.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'planet_detail_view.dart';
@@ -18,13 +21,55 @@ class CharacterProfileView extends ConsumerWidget {
   final int characterId;
   final bool fromFavorites;
 
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final profileAsync = ref.watch(
-      characterProfileProvider(characterId),
-    );
+@override
+Widget build(BuildContext context, WidgetRef ref) {
+  final profileProvider = characterProfileProvider(characterId);
 
-    return Scaffold(
+  // Listen for profile data arriving or refreshing.
+  ref.listen<AsyncValue<CharacterProfile>>(
+    profileProvider,
+    (previous, next) {
+      next.whenData((character) {
+        preloadImageUrls(
+          context,
+          [
+            character.imageUrl,
+            if (character.originPlanet != null)
+              character.originPlanet!.imageUrl,
+            ...character.transformations.map(
+              (transformation) => transformation.imageUrl,
+            ),
+          ],
+        );
+      });
+    },
+  );
+
+  final profileAsync = ref.watch(profileProvider);
+
+  // Also handle profile data that was already loaded before this build.
+  final character = profileAsync.asData?.value;
+
+  if (character != null) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!context.mounted) return;
+
+      preloadImageUrls(
+        context,
+        [
+          character.imageUrl,
+          if (character.originPlanet != null)
+            character.originPlanet!.imageUrl,
+          ...character.transformations.map(
+            (transformation) => transformation.imageUrl,
+          ),
+        ],
+      );
+    });
+  }
+
+  return Scaffold(
+    // Keep your existing Scaffold code here.
       appBar: AppBar(title: const Text('Character dossier')),
       body: profileAsync.when(
         loading: () => const Center(
@@ -103,16 +148,14 @@ class CharacterProfileView extends ConsumerWidget {
                           tag: fromFavorites
                               ? favoriteCharacterHeroTag(character.id)
                               : characterHeroTag(character.id),
-                          child: CachedNetworkImage(
-                            imageUrl: character.imageUrl,
+                          child: buildCharacterImage(
+                            character.imageUrl,
                             fit: BoxFit.contain,
-                            placeholder: (_, __) => const Center(
+                            placeholder: const Center(
                               child: CircularProgressIndicator(),
                             ),
-                            errorWidget: (_, __, ___) => const Icon(
-                              Icons.person,
-                              size: 80,
-                            ),
+                            errorWidget: const Icon(Icons.person, size: 80),
+                            showLoadingIndicator: true,
                           ),
                         ),
                       ),
@@ -207,11 +250,10 @@ class CharacterProfileView extends ConsumerWidget {
                       leading: SizedBox(
                         width: 56,
                         height: 56,
-                        child: CachedNetworkImage(
-                          imageUrl: character.originPlanet!.imageUrl,
+                        child: buildCharacterImage(
+                          character.originPlanet!.imageUrl,
                           fit: BoxFit.contain,
-                          errorWidget: (_, __, ___) =>
-                              const Icon(Icons.public),
+                          errorWidget: const Icon(Icons.public),
                         ),
                       ),
                       title: Text(character.originPlanet!.name),
@@ -257,25 +299,78 @@ class _TransformationCarousel extends StatefulWidget {
       _TransformationCarouselState();
 }
 
+
 class _TransformationCarouselState
     extends State<_TransformationCarousel> {
   late final PageController _controller;
+  late final ValueNotifier<int> _sharedPage;
+  Timer? _autoPlayTimer;
+  bool _isAnimatingToNextPage = false;
+  int _currentPageIndex = 0;
+  bool _isFullScreenOpen = false;
 
   @override
   void initState() {
     super.initState();
 
     final count = widget.transformations.length;
+    final initialPage = count * 1000;
+    _currentPageIndex = initialPage;
 
-    // Start far into the repeated page sequence so either direction
-    // has plenty of room to scroll.
-    _controller = PageController(
-      initialPage: count > 0 ? count * 1000 : 0,
-    );
+    _sharedPage = ValueNotifier<int>(initialPage);
+    _controller = PageController(initialPage: initialPage);
+
+    _sharedPage.addListener(_syncToSharedPage);
+
+    if (count > 1) {
+      _scheduleAutoPlay();
+    }
+  }
+
+  void _scheduleAutoPlay() {
+    _autoPlayTimer?.cancel();
+
+    if (!mounted || widget.transformations.length <= 1) return;
+
+    _autoPlayTimer = Timer(const Duration(seconds: 5), () {
+      if (!mounted) return;
+
+      // One timer, one shared page index.
+      _sharedPage.value = _sharedPage.value + 1;
+    });
+  }
+
+  void _syncToSharedPage() {
+    if (!mounted || !_controller.hasClients) return;
+
+    final target = _sharedPage.value;
+    final current = _controller.page;
+
+    if (current != null && (current - target).abs() < 0.01) {
+      _scheduleAutoPlay();
+      return;
+    }
+
+    if (_isFullScreenOpen) {
+      // Fullscreen covers the carousel. Prepare the correct Hero
+      // destination before the fullscreen route is popped.
+      _controller.jumpToPage(target);
+    } else {
+      _controller.animateToPage(
+        target,
+        duration: const Duration(milliseconds: 750),
+        curve: Curves.easeInOutCubicEmphasized,
+      );
+    }
+
+    _scheduleAutoPlay();
   }
 
   @override
   void dispose() {
+    _autoPlayTimer?.cancel();
+    _sharedPage.removeListener(_syncToSharedPage);
+    _sharedPage.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -285,18 +380,29 @@ class _TransformationCarouselState
     final transformations = widget.transformations;
     final count = transformations.length;
 
-    if (count == 0) {
-      return const SizedBox.shrink();
-    }
+    if (count == 0) return const SizedBox.shrink();
 
     return SizedBox(
       height: 260,
       child: PageView.builder(
         controller: _controller,
-        // A null itemCount allows continuous scrolling.
         itemBuilder: (context, pageIndex) {
           final index = pageIndex % count;
           final transformation = transformations[index];
+          final image = buildCharacterImage(
+            transformation.imageUrl,
+            fit: BoxFit.contain,
+            placeholder: const Center(
+              child: CircularProgressIndicator(),
+            ),
+            errorWidget: const Center(
+              child: Icon(
+                Icons.broken_image_outlined,
+                size: 40,
+              ),
+            ),
+            showLoadingIndicator: true,
+          );
 
           return Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -310,75 +416,79 @@ class _TransformationCarouselState
                       fit: StackFit.expand,
                       children: [
                         Material(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .surfaceContainer,
+                          color: Theme.of(context).colorScheme.surfaceContainer,
                           child: InkWell(
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (_) => FullScreenImageViewer(
-                                    images: transformations.map((transformation) {
-                                      return FullScreenImageItem(
-                                        imageUrl: transformation.imageUrl,
-                                        heroTag:
-                                            'transformation-image-${transformation.imageUrl}',
-                                        title: transformation.name,
-                                      );
-                                    }).toList(),
-                                    initialIndex: index,
+                            onTap: () async {
+                              // Stop the timer from changing the tapped page while opening.
+                              _autoPlayTimer?.cancel();
+
+                              // Capture the exact page the user tapped, not a stale index.
+                              _isFullScreenOpen = true;
+                              _sharedPage.value = pageIndex;
+
+                              // Ensure the carousel is on this exact page before Hero starts.
+                              if (_controller.hasClients) {
+                                _controller.jumpToPage(pageIndex);
+                              }
+
+                              try {
+                                await Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => FullScreenImageViewer(
+                                      images: transformations.map((item) {
+                                        return FullScreenImageItem(
+                                          imageUrl: item.imageUrl,
+                                          heroTag: 'transformation-image-${item.imageUrl}',
+                                          title: item.name,
+                                        );
+                                      }).toList(),
+                                      initialIndex: index,
+                                      pageNotifier: _sharedPage,
+                                      onBeforePop: () {
+                                        _isFullScreenOpen = false;
+
+                                        // Prepare the underlying carousel for the selected image.
+                                        if (_controller.hasClients) {
+                                          _controller.jumpToPage(_sharedPage.value);
+                                        }
+                                      },
+                                    ),
                                   ),
-                                ),
-                              );
+                                );
+                              } finally {
+                                if (mounted) {
+                                  _isFullScreenOpen = false;
+                                  _scheduleAutoPlay();
+                                }
+                              }
                             },
                             child: Padding(
-                            padding: const EdgeInsets.all(8),
-                            child: Hero(
-                              tag: 'transformation-image-${transformation.imageUrl}',
-                              child: CachedNetworkImage(
-                                imageUrl: transformation.imageUrl,
-                                fit: BoxFit.contain,
-                                placeholder: (_, __) => const Center(
-                                  child: CircularProgressIndicator(),
-                                ),
-                                errorWidget: (_, __, ___) => const Center(
-                                  child: Icon(
-                                    Icons.broken_image_outlined,
-                                    size: 40,
-                                  ),
-                                ),
+                              padding: const EdgeInsets.all(8),
+                              child: Hero(
+                                tag: 'transformation-image-${transformation.imageUrl}',
+                                child: image,
                               ),
                             ),
-                          ),
                           ),
                         ),
                         Positioned(
                           top: 8,
                           right: 8,
-                          child: IgnorePointer(
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .primaryContainer,
-                                borderRadius: BorderRadius.circular(20),
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
                               ),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 6,
-                                ),
-                                child: Text(
-                                  '${index + 1} / $count',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .labelLarge
-                                      ?.copyWith(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onPrimaryContainer,
-                                        fontWeight: FontWeight.bold,
-                                      ),
+                              child: Text(
+                                '${index + 1} / $count',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
                             ),
@@ -405,6 +515,7 @@ class _TransformationCarouselState
     );
   }
 }
+
 
 
 
@@ -517,15 +628,16 @@ class _TransformationGalleryScreenState
                   return Padding(
                     padding: const EdgeInsets.all(20),
                     child: Center(
-                      child: CachedNetworkImage(
-                        imageUrl: item.imageUrl,
+                      child: buildCharacterImage(
+                        item.imageUrl,
                         fit: BoxFit.contain,
-                        placeholder: (_, __) => const Center(
+                        placeholder: const Center(
                           child: CircularProgressIndicator(
                             color: Colors.white,
                           ),
                         ),
-                        errorWidget: (_, __, error) => const Column(
+                        showLoadingIndicator: true,
+                        errorWidget: const Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(

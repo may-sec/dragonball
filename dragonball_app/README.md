@@ -40,7 +40,11 @@ lib/
 
 
 
-flutter run -d "android" --dart-define-from-file=.env
+flutter run -d "POCO M2 Pro" --dart-define-from-file=.env
+
+flutter pub get                                          
+dart run flutter_launcher_icons
+dart run flutter_native_splash:create
 
 
 flutter build apk --release --dart-define-from-file=.env && \

@@ -1,5 +1,5 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dragonball_app/core/result/result.dart';
+import 'package:dragonball_app/widgets/build_character_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -64,16 +64,14 @@ class PlanetDetailView extends ConsumerWidget {
                   color: Theme.of(context).colorScheme.surfaceContainer,
                   borderRadius: BorderRadius.circular(24),
                 ),
-                child: CachedNetworkImage(
-                  imageUrl: planet.imageUrl,
+                child: buildCharacterImage(
+                  planet.imageUrl,
                   fit: BoxFit.contain,
-                  placeholder: (_, __) => const Center(
-                    child: CircularProgressIndicator(),
+                  placeholder: const Center(
+                    child: CircularProgressIndicator(strokeWidth: 2),
                   ),
-                  errorWidget: (_, __, ___) => const Icon(
-                    Icons.public,
-                    size: 72,
-                  ),
+                  showLoadingIndicator: true,
+                  errorWidget: const Icon(Icons.public, size: 42),
                 ),
               ),
               const SizedBox(height: 20),

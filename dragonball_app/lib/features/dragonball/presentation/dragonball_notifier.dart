@@ -219,11 +219,6 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
     }
   }
 
-  void _reportFailure(Failure failure) {
-    ref.read(networkNoticeProvider.notifier).show(failure.message);
-  }
-
-
 
   Future<void> _runCharacterRequest({
     required int sequence,

@@ -1,5 +1,4 @@
-
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:dragonball_app/widgets/build_character_image.dart';
 import 'package:flutter/material.dart';
 
 class FullScreenImageItem {
@@ -7,6 +6,7 @@ class FullScreenImageItem {
     required this.imageUrl,
     required this.heroTag,
     required this.title,
+    
   });
 
   final String imageUrl;
@@ -19,10 +19,17 @@ class FullScreenImageViewer extends StatefulWidget {
     super.key,
     required this.images,
     this.initialIndex = 0,
+    this.pageNotifier,
+    this.onBeforePop,
   }) : assert(images.length > 0);
 
   final List<FullScreenImageItem> images;
   final int initialIndex;
+  final VoidCallback? onBeforePop;
+  
+
+  // Shared with the transformation carousel.
+  final ValueNotifier<int>? pageNotifier;
 
   @override
   State<FullScreenImageViewer> createState() =>
@@ -32,6 +39,7 @@ class FullScreenImageViewer extends StatefulWidget {
 class _FullScreenImageViewerState
     extends State<FullScreenImageViewer> {
   late final PageController _pageController;
+  late int _currentPageIndex;
   late int _currentIndex;
 
   int get _initialIndex =>
@@ -45,45 +53,89 @@ class _FullScreenImageViewerState
 
     _currentIndex = _initialIndex;
 
-    _pageController = PageController(
-      initialPage: _hasMultipleImages
-          ? widget.images.length * 1000 + _currentIndex
-          : 0,
+    final initialPage = widget.pageNotifier?.value ??
+        (_hasMultipleImages
+            ? widget.images.length * 1000 + _currentIndex
+            : 0);
+
+    _currentPageIndex = initialPage;
+    _pageController = PageController(initialPage: initialPage);
+
+    widget.pageNotifier?.addListener(_syncToSharedPage);
+  }
+
+  Future<void> _closeViewer() async {
+    final target = widget.pageNotifier?.value;
+
+    if (target != null) {
+      widget.pageNotifier!.value = target;
+    }
+
+    widget.onBeforePop?.call();
+
+    if (mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  void _syncToSharedPage() {
+    if (!mounted || !_pageController.hasClients) return;
+
+    final target = widget.pageNotifier?.value;
+    if (target == null) return;
+
+    final current = _pageController.page;
+
+    if (current != null && (current - target).abs() < 0.01) {
+      return;
+    }
+
+    _pageController.animateToPage(
+      target,
+      duration: const Duration(milliseconds: 750),
+      curve: Curves.easeInOutCubicEmphasized,
     );
   }
 
   @override
   void dispose() {
+    widget.pageNotifier?.removeListener(_syncToSharedPage);
     _pageController.dispose();
     super.dispose();
   }
 
-  Widget _buildImage(int index) {
+  Widget _buildImage(int index, int pageIndex) {
     final image = widget.images[index];
 
-    final imageWidget = CachedNetworkImage(
-      imageUrl: image.imageUrl,
+    final imageWidget = buildCharacterImage(
+      image.imageUrl,
       fit: BoxFit.contain,
       width: double.infinity,
       height: double.infinity,
-      placeholder: (_, __) => const Center(
-        child: CircularProgressIndicator(color: Colors.white),
+      placeholder: const Center(
+        child: CircularProgressIndicator(
+          color: Colors.white,
+        ),
       ),
-      errorWidget: (_, __, ___) => const Icon(
+      showLoadingIndicator: true,
+      errorWidget: const Icon(
         Icons.broken_image_outlined,
         color: Colors.white70,
-        size: 56,
+        size: 64,
       ),
     );
 
-    return Center(
-      child: index == _initialIndex
-          ? Hero(
-              tag: image.heroTag,
-              child: imageWidget,
-            )
-          : imageWidget,
-    );
+    // Only the currently visible page should own this Hero tag.
+    if (pageIndex == _currentPageIndex) {
+      return Center(
+        child: Hero(
+          tag: image.heroTag,
+          child: imageWidget,
+        ),
+      );
+    }
+
+    return Center(child: imageWidget);
   }
 
   @override
@@ -101,17 +153,23 @@ class _FullScreenImageViewerState
                       controller: _pageController,
                       onPageChanged: (pageIndex) {
                         setState(() {
-                          _currentIndex =
-                              pageIndex % widget.images.length;
+                          _currentPageIndex = pageIndex;
+                          _currentIndex = pageIndex % widget.images.length;
                         });
+
+                        final notifier = widget.pageNotifier;
+
+                        if (notifier != null && notifier.value != pageIndex) {
+                          notifier.value = pageIndex;
+                        }
                       },
                       itemBuilder: (context, pageIndex) {
                         final index =
                             pageIndex % widget.images.length;
-                        return _buildImage(index);
+                        return _buildImage(index, pageIndex);
                       },
                     )
-                  : _buildImage(0),
+                  : _buildImage(0, 0),
             ),
 
             Positioned(
@@ -119,7 +177,7 @@ class _FullScreenImageViewerState
               left: 12,
               child: IconButton.filledTonal(
                 tooltip: 'Close image viewer',
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: _closeViewer,
                 icon: const Icon(Icons.close_rounded),
               ),
             ),
@@ -153,16 +211,31 @@ class _FullScreenImageViewerState
               left: 20,
               right: 20,
               bottom: 24,
-              child: Text(
-                item.title,
-                textAlign: TextAlign.center,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 250),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                transitionBuilder: (child, animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0, 0.12),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: child,
                     ),
+                  );
+                },
+                child: Text(
+                  item.title,
+                  key: ValueKey(item.title),
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
             ),
           ],

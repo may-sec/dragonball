@@ -1,3 +1,5 @@
+import 'package:dragonball_app/features/dragonball/models/dragonball_models.dart';
+import 'package:dragonball_app/widgets/image_preloader.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -13,9 +15,12 @@ class SplashScreen extends ConsumerStatefulWidget {
 
 class _SplashScreenState extends ConsumerState<SplashScreen> {
   bool _navigationScheduled = false;
+  bool _preloadStarted = false;
+  bool _imagesReady = false;
 
   @override
   Widget build(BuildContext context) {
+
     // Start loading the catalogues while the splash screen is visible.
     final catalog = ref.watch(dragonBallControllerProvider);
     final data = catalog.asData?.value;
@@ -25,6 +30,23 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     final isLoadingPlanets =
         data?.isLoadingPlanets ?? true;
 
+    Future<void> _prepareInitialImages(
+      List<Character> characters,
+      List<Planet> planets,
+    ) async {
+      await preloadImageUrls(
+        context,
+        [
+          ...characters.map((character) => character.imageUrl),
+          ...planets.map((planet) => planet.imageUrl),
+        ],
+      );
+
+      if (mounted) {
+        setState(() => _imagesReady = true);
+      }
+    }    
+
     // Navigate only after both initial catalogue requests have finished.
     // Failed requests also finish loading, allowing the home screen
     // to display its existing error and retry UI.
@@ -32,7 +54,17 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         !isLoadingCharacters &&
         !isLoadingPlanets;
 
-    if (isReady && !_navigationScheduled) {
+    if (isReady && !_preloadStarted) {
+      _preloadStarted = true;
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || data == null) return;
+
+        _prepareInitialImages(data.characters, data.planets);
+      });
+    }
+
+    if (isReady && _imagesReady && !_navigationScheduled) {
       _navigationScheduled = true;
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -42,15 +74,10 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
           PageRouteBuilder<void>(
             pageBuilder: (_, animation, secondaryAnimation) =>
                 const DragonBallHomeScreen(),
-            transitionsBuilder:
-                (_, animation, secondaryAnimation, child) {
-              return FadeTransition(
-                opacity: animation,
-                child: child,
-              );
+            transitionsBuilder: (_, animation, secondaryAnimation, child) {
+              return FadeTransition(opacity: animation, child: child);
             },
-            transitionDuration:
-                const Duration(milliseconds: 350),
+            transitionDuration: const Duration(milliseconds: 350),
           ),
         );
       });
@@ -70,6 +97,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     } else {
       status = 'Preparing your universe...';
     }
+
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
