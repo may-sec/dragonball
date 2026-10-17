@@ -182,7 +182,7 @@ class AppSettingsController extends Notifier<AppSettings> {
           : 'recent';
 
   int _validTab(int? value) =>
-      value != null && value >= 0 && value <= 2 ? value : 0;
+      value != null && value >= 0 && value <= 3 ? value : 0;
 
   double _validTextScale(double? value) =>
       value != null &&
@@ -266,7 +266,7 @@ class AppSettingsController extends Notifier<AppSettings> {
   }
 
   void setDefaultTab(int value) {
-    if (value < 0 || value > 2) return;
+    if (value < 0 || value > 3) return;
     _change(state.copyWith(defaultTab: value));
     _save(_defaultTabKey, value);
   }

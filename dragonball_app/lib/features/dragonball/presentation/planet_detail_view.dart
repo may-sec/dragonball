@@ -1,127 +1,162 @@
-import 'package:dragonball_app/core/result/result.dart';
-import 'package:dragonball_app/widgets/build_character_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design/app_icons.dart';
+import '../../../core/design/app_tokens.dart';
+import '../../../core/design/category_style.dart';
+import '../../../core/l10n/language_provider.dart';
+import '../../../core/result/result.dart';
+import '../../../core/utils/text_cleaners.dart';
+import '../../../widgets/build_character_image.dart';
+import '../../../widgets/shared_widgets.dart';
 import 'dragonball_notifier.dart';
+import 'navigation_path.dart';
+
+// LEARN (ColorFilter): a destroyed planet is drawn in grayscale. A color
+// matrix multiplies [R G B A] rows; equal rows for R, G and B = gray.
+const ColorFilter _grayscale = ColorFilter.matrix(<double>[
+  0.2126, 0.7152, 0.0722, 0, 0,
+  0.2126, 0.7152, 0.0722, 0, 0,
+  0.2126, 0.7152, 0.0722, 0, 0,
+  0, 0, 0, 1, 0,
+]);
 
 class PlanetDetailView extends ConsumerWidget {
-  const PlanetDetailView({
-    super.key,
-    required this.planetId,
-  });
+  const PlanetDetailView({super.key, required this.planetId});
 
   final int planetId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(stringsProvider);
     final planetAsync = ref.watch(planetDetailProvider(planetId));
+    final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Planet dossier')),
+      appBar: AppBar(title: Text(s.planetDossier)),
       body: planetAsync.when(
-        loading: () => const Center(
-          child: CircularProgressIndicator.adaptive(),
+        loading: () => const Center(child: CircularProgressIndicator.adaptive()),
+        error: (error, _) => MessageBlock(
+          icon: AppIcons.offline,
+          title: s.loadFailed,
+          message: error.toString(),
+          actionLabel: s.retry,
+          onAction: () => ref.invalidate(planetDetailProvider(planetId)),
         ),
-        error: (error, _) => Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+        data: (planet) {
+          final statusColor =
+              planet.isDestroyed ? theme.colorScheme.error : const Color(0xFF3FA66A);
+
+          Widget image = buildCharacterImage(
+            planet.imageUrl,
+            fit: BoxFit.contain,
+            showLoadingIndicator: true,
+            errorWidget: const Icon(AppIcons.globe, size: 42),
+          );
+          if (planet.isDestroyed) {
+            image = ColorFiltered(colorFilter: _grayscale, child: image);
+          }
+
+          final residentIds = [for (final c in planet.characters) c.id];
+
+          return RefreshIndicator(
+            onRefresh: () async {
+              final repo = ref.read(dragonBallRepositoryProvider);
+              final result = await repo.fetchPlanetDetail(planetId);
+              if (result case Ok()) {
+                ref.invalidate(planetDetailProvider(planetId));
+              }
+            },
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(AppSpace.x5),
               children: [
-                const Icon(Icons.public_off, size: 48),
-                const SizedBox(height: 12),
-                Text(error.toString(), textAlign: TextAlign.center),
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: () => ref.invalidate(planetDetailProvider(planetId)),
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Try again'),
-                ),
-              ],
-            ),
-          ),
-        ),
-        
-        data: (planet) => RefreshIndicator(
-          onRefresh: () async {
-            final repository = ref.read(dragonBallRepositoryProvider);
-
-            final result = await repository.fetchPlanetDetail(planetId);
-
-            if (result case Ok()) {
-              ref.invalidate(planetDetailProvider(planetId));
-            }
-          },
-          child: ListView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.all(20),
-            children: [
-              Container(
-                height: 240,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainer,
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: buildCharacterImage(
-                  planet.imageUrl,
-                  fit: BoxFit.contain,
-                  placeholder: const Center(
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  showLoadingIndicator: true,
-                  errorWidget: const Icon(Icons.public, size: 42),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                planet.name,
-                style: Theme.of(context).textTheme.headlineMedium,
-              ),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Chip(
-                  avatar: Icon(
-                    planet.isDestroyed ? Icons.broken_image : Icons.public,
-                    size: 18,
-                  ),
-                  label: Text(
-                    planet.isDestroyed ? 'Destroyed' : 'Intact',
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                planet.description.isEmpty
-                    ? 'No description is available for this planet.'
-                    : planet.description,
-                style: Theme.of(context).textTheme.bodyLarge,
-              ),
-              if (planet.characters.isNotEmpty) ...[
-                const SizedBox(height: 28),
-                Text(
-                  'Associated characters',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 12),
-                ...planet.characters.map(
-                  (character) => Card(
-                    child: ListTile(
-                      leading: const CircleAvatar(
-                        child: Icon(Icons.person),
-                      ),
-                      title: Text(character.name),
-                      subtitle: Text(character.race),
+                Container(
+                  height: 240,
+                  padding: const EdgeInsets.all(AppSpace.x4),
+                  decoration: BoxDecoration(
+                    borderRadius: AppRadius.lgAll,
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        statusColor.withValues(alpha: 0.25),
+                        statusColor.withValues(alpha: 0.03),
+                      ],
                     ),
                   ),
+                  child: image,
                 ),
-              ],
-            ],
-          ),
-        ),
+                const SizedBox(height: AppSpace.x5),
+                Text(planet.name, style: theme.textTheme.headlineMedium),
+                const SizedBox(height: AppSpace.x2),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: InfoChip(
+                    label: planet.isDestroyed ? s.destroyed : s.intact,
+                    icon: planet.isDestroyed ? AppIcons.destroyed : AppIcons.globe,
+                    color: statusColor,
+                  ),
+                ),
+                const SizedBox(height: AppSpace.x3),
+                Text(
+                  planet.description.isEmpty
+                      ? s.noPlanetDescription
+                      : stripFootnotes(planet.description),
+                  style: theme.textTheme.bodyLarge,
+                ),
 
+                // Residents: real thumbnails, tappable, with a path.
+                if (planet.characters.isNotEmpty) ...[
+                  const SizedBox(height: AppSpace.x6),
+                  Text(
+                    '${s.residents} (${planet.characters.length})',
+                    style: theme.textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: AppSpace.x3),
+                  for (final (i, character) in planet.characters.indexed)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: AppSpace.x2),
+                      child: Card(
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.all(AppSpace.x3),
+                          leading: SizedBox(
+                            width: 56,
+                            height: 56,
+                            child: buildCharacterImage(
+                              character.imageUrl,
+                              fit: BoxFit.contain,
+                              errorWidget: const Icon(AppIcons.user),
+                            ),
+                          ),
+                          title: Text(character.name),
+                          subtitle: Text(
+                            '${character.race} • ${character.affiliation}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: Icon(
+                            styleForCategory(character.affiliation).icon,
+                            color: styleForCategory(character.affiliation).color,
+                          ),
+                          // Path: "Namek › Piccolo"; swipe moves between residents.
+                          onTap: () => openCharacter(
+                            context,
+                            CharacterNavContext(
+                              source: FromPlanet(planet.name),
+                              siblingIds: residentIds,
+                              index: i,
+                              heroTagFor: (id) => 'planet-$planetId-character-$id',
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ],
+            ),
+          );
+        },
       ),
     );
   }

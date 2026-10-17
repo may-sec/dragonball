@@ -7,7 +7,7 @@ import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
-
+import 'language_section.dart';
 import '../data/json_response_cache.dart';
 import 'app_settings.dart';
 import 'dragonball_notifier.dart';
@@ -440,6 +440,7 @@ Future<void> _importFavorites() async {
             ),
           ]),
 
+          const LanguageSettingsSection(),
           // BROWSING & DISPLAY
           _sectionTitle(context, 'Browsing & display'),
           _group([
@@ -509,18 +510,10 @@ Future<void> _importFavorites() async {
               trailing: DropdownButton<int>(
                 value: settings.defaultTab,
                 items: const [
-                  DropdownMenuItem(
-                    value: 0,
-                    child: Text('Characters'),
-                  ),
-                  DropdownMenuItem(
-                    value: 1,
-                    child: Text('Planets'),
-                  ),
-                  DropdownMenuItem(
-                    value: 2,
-                    child: Text('Favorites'),
-                  ),
+                  DropdownMenuItem(value: 0, child: Text('Characters')),
+                  DropdownMenuItem(value: 1, child: Text('Explore')),
+                  DropdownMenuItem(value: 2, child: Text('Planets')),
+                  DropdownMenuItem(value: 3, child: Text('Favorites')),
                 ],
                 onChanged: (value) {
                   if (value != null) {

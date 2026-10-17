@@ -14,6 +14,10 @@ import 'dragonball_state.dart';
 import 'planet_detail_view.dart';
 import 'search_debouncer.dart';
 
+import 'package:dragonball_app/core/design/app_icons.dart';
+import 'package:dragonball_app/core/l10n/language_provider.dart';
+import 'explore_screen.dart';
+
 class DragonBallHomeScreen extends HookConsumerWidget {
   const DragonBallHomeScreen({super.key});
 
@@ -193,8 +197,16 @@ class DragonBallHomeScreen extends HookConsumerWidget {
       dragonBallFavoritesProvider.select((ids) => ids.length),
     );
 
-    final isCharacterTab = selectedTab.value == 0;
-    final isPlanetTab = selectedTab.value == 1;
+    final s = ref.watch(stringsProvider);
+
+    final titles = <(String, String)>[
+      ('Warrior database', 'Explore fighters and villains'),
+      (s.exploreTitle, s.exploreSubtitle),
+      ('Cosmic atlas', 'Explore worlds across the universe'),
+      ('Favorite warriors', 'Your saved characters'),
+    ];
+
+    final (title, subtitle) = titles[selectedTab.value];
 
     return Scaffold(
       appBar: AppBar(
@@ -202,19 +214,11 @@ class DragonBallHomeScreen extends HookConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              isCharacterTab
-                  ? 'Warrior database'
-                  : isPlanetTab
-                      ? 'Cosmic atlas'
-                      : 'Favorite warriors',
+              title,
               style: Theme.of(context).textTheme.titleLarge,
             ),
             Text(
-              isCharacterTab
-                  ? 'Explore fighters and villains'
-                  : isPlanetTab
-                      ? 'Explore worlds across the universe'
-                      : 'Your saved characters',
+              subtitle,
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
@@ -256,18 +260,23 @@ class DragonBallHomeScreen extends HookConsumerWidget {
         onDestinationSelected: (index) {
           selectedTab.value = index;
         },
-        destinations: const [
-          NavigationDestination(
+        destinations: [
+          const NavigationDestination(
             icon: Icon(Icons.people_outline),
             selectedIcon: Icon(Icons.people),
             label: 'Characters',
           ),
           NavigationDestination(
+            icon: const Icon(AppIcons.explore),
+            selectedIcon: const Icon(AppIcons.exploreFill),
+            label: s.tabExplore,
+          ),
+          const NavigationDestination(
             icon: Icon(Icons.public_outlined),
             selectedIcon: Icon(Icons.public),
             label: 'Planets',
           ),
-          NavigationDestination(
+          const NavigationDestination(
             icon: Icon(Icons.favorite_border),
             selectedIcon: Icon(Icons.favorite),
             label: 'Favorites',
@@ -331,6 +340,7 @@ class DragonBallHomeScreen extends HookConsumerWidget {
                     .resetCharacterFilters();
               },
             ),
+            const ExploreScreen(),
             _PlanetTab(
               state: state,
               isGridView: planetGridView,
