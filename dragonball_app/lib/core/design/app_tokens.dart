@@ -27,11 +27,29 @@ abstract final class AppRadius {
 }
 
 /// Animation durations + one shared curve, so motion feels consistent.
+///
+/// LEARN (one place decides about motion): most Flutter animation widgets
+/// (AnimatedSize, AnimatedSwitcher, AnimatedScale, PageController.animateToPage)
+/// do NOT look at the "reduce motion" setting by themselves. Every call site
+/// has to ask. Instead of each one repeating the MediaQuery check, they all go
+/// through [resolve]: if motion is reduced it returns Duration.zero, which
+/// makes an implicit animation jump straight to its end value.
+///
+/// MediaQuery.disableAnimations is true when EITHER the Android system setting
+/// ("Remove animations") is on OR the in-app toggle is on (main.dart merges the
+/// in-app toggle into MediaQuery).
 abstract final class AppMotion {
   static const Duration fast = Duration(milliseconds: 150);
   static const Duration base = Duration(milliseconds: 250);
   static const Duration slow = Duration(milliseconds: 450);
   static const Curve curve = Curves.easeOutCubic;
+
+  static bool isReduced(BuildContext context) =>
+      MediaQuery.disableAnimationsOf(context);
+
+  /// `duration` normally, Duration.zero when motion is reduced.
+  static Duration resolve(BuildContext context, Duration duration) =>
+      isReduced(context) ? Duration.zero : duration;
 }
 
 /// LEARN (responsive layout): width -> number of grid columns, plus a

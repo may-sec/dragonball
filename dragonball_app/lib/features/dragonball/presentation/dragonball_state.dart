@@ -4,6 +4,8 @@ import '../models/dragonball_models.dart';
 
 const Object _unset = Object();
 
+/// What the home screen renders. Since the catalog refactor this is a VIEW of
+/// the catalog (already filtered), not the place where data is loaded.
 @immutable
 final class DragonBallState {
   const DragonBallState({
@@ -25,8 +27,10 @@ final class DragonBallState {
     required this.planetError,
     required this.planetSearchName,
     required this.isDestroyedFilter,
+    this.isRefreshing = false,
+    this.catalogIsComplete = true,
+    this.lastValidatedAt,
   });
-
 
   final List<Character> characters;
   final int characterCurrentPage;
@@ -50,6 +54,15 @@ final class DragonBallState {
   final String planetSearchName;
   final bool? isDestroyedFilter;
 
+  /// A background check against the server is running.
+  final bool isRefreshing;
+
+  /// false = some pages are missing (offline / failed), data is partial.
+  final bool catalogIsComplete;
+
+  /// When the server last confirmed the data. null = not this install yet.
+  final DateTime? lastValidatedAt;
+
   bool get hasActiveCharacterFilters =>
       searchName.trim().isNotEmpty ||
       selectedGender != 'ALL' ||
@@ -57,14 +70,13 @@ final class DragonBallState {
       selectedAffiliation != 'ALL';
 
   bool get hasActivePlanetFilters =>
-      planetSearchName.trim().isNotEmpty ||
-      isDestroyedFilter != null;
+      planetSearchName.trim().isNotEmpty || isDestroyedFilter != null;
 
   factory DragonBallState.initial() {
     return const DragonBallState(
       characters: [],
       characterCurrentPage: 1,
-      hasNextCharacters: true,
+      hasNextCharacters: false,
       isLoadingCharacters: false,
       isLoadingMoreCharacters: false,
       characterError: null,
@@ -74,7 +86,7 @@ final class DragonBallState {
       selectedAffiliation: 'ALL',
       planets: [],
       planetCurrentPage: 1,
-      hasNextPlanets: true,
+      hasNextPlanets: false,
       isLoadingPlanets: false,
       isLoadingMorePlanets: false,
       planetError: null,
@@ -102,15 +114,15 @@ final class DragonBallState {
     Object? planetError = _unset,
     String? planetSearchName,
     Object? isDestroyedFilter = _unset,
+    bool? isRefreshing,
+    bool? catalogIsComplete,
+    Object? lastValidatedAt = _unset,
   }) {
     return DragonBallState(
       characters: characters ?? this.characters,
-      characterCurrentPage:
-          characterCurrentPage ?? this.characterCurrentPage,
-      hasNextCharacters:
-          hasNextCharacters ?? this.hasNextCharacters,
-      isLoadingCharacters:
-          isLoadingCharacters ?? this.isLoadingCharacters,
+      characterCurrentPage: characterCurrentPage ?? this.characterCurrentPage,
+      hasNextCharacters: hasNextCharacters ?? this.hasNextCharacters,
+      isLoadingCharacters: isLoadingCharacters ?? this.isLoadingCharacters,
       isLoadingMoreCharacters:
           isLoadingMoreCharacters ?? this.isLoadingMoreCharacters,
       characterError: identical(characterError, _unset)
@@ -119,14 +131,12 @@ final class DragonBallState {
       searchName: searchName ?? this.searchName,
       selectedGender: selectedGender ?? this.selectedGender,
       selectedRace: selectedRace ?? this.selectedRace,
-      selectedAffiliation:
-          selectedAffiliation ?? this.selectedAffiliation,
+      selectedAffiliation: selectedAffiliation ?? this.selectedAffiliation,
       planets: planets ?? this.planets,
       planetCurrentPage: planetCurrentPage ?? this.planetCurrentPage,
       hasNextPlanets: hasNextPlanets ?? this.hasNextPlanets,
       isLoadingPlanets: isLoadingPlanets ?? this.isLoadingPlanets,
-      isLoadingMorePlanets:
-          isLoadingMorePlanets ?? this.isLoadingMorePlanets,
+      isLoadingMorePlanets: isLoadingMorePlanets ?? this.isLoadingMorePlanets,
       planetError: identical(planetError, _unset)
           ? this.planetError
           : planetError as String?,
@@ -134,6 +144,11 @@ final class DragonBallState {
       isDestroyedFilter: identical(isDestroyedFilter, _unset)
           ? this.isDestroyedFilter
           : isDestroyedFilter as bool?,
+      isRefreshing: isRefreshing ?? this.isRefreshing,
+      catalogIsComplete: catalogIsComplete ?? this.catalogIsComplete,
+      lastValidatedAt: identical(lastValidatedAt, _unset)
+          ? this.lastValidatedAt
+          : lastValidatedAt as DateTime?,
     );
   }
 }

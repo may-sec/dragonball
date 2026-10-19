@@ -34,6 +34,8 @@ abstract final class AppIcons {
   static const IconData caretRight = PhosphorIconsRegular.caretRight;
   static const IconData translate = PhosphorIconsRegular.translate;
   static const IconData lock = PhosphorIconsRegular.lock;
+  static const IconData filter = PhosphorIconsRegular.funnel;
+  static const IconData filterClear = PhosphorIconsRegular.funnelX;
 
   // Favorites
   static const IconData heart = PhosphorIconsRegular.heart;
@@ -72,4 +74,26 @@ abstract final class AppIcons {
   static const IconData error = PhosphorIconsRegular.warningCircle;
   static const IconData imageBroken = PhosphorIconsRegular.imageBroken;
   static const IconData empty = PhosphorIconsRegular.magnifyingGlass;
+
+  // Settings
+  static const IconData themeSystem = PhosphorIconsRegular.circleHalf;
+  static const IconData themeLight = PhosphorIconsRegular.sun;
+  static const IconData themeDark = PhosphorIconsRegular.moon;
+  static const IconData palette = PhosphorIconsRegular.palette;
+  static const IconData animation = PhosphorIconsRegular.magicWand;
+  static const IconData density = PhosphorIconsRegular.rows;
+  static const IconData share = PhosphorIconsRegular.export;
+  static const IconData importFile = PhosphorIconsRegular.downloadSimple;
+  static const IconData delete = PhosphorIconsRegular.trash;
+  static const IconData memory = PhosphorIconsRegular.memory;
+  static const IconData storage = PhosphorIconsRegular.database;
+  static const IconData info = PhosphorIconsRegular.info;
+  static const IconData privacy = PhosphorIconsRegular.shieldCheck;
+  static const IconData reset = PhosphorIconsRegular.arrowCounterClockwise;
+  static const IconData textSize = PhosphorIconsRegular.textAa;
+  static const IconData contrast = PhosphorIconsRegular.circleHalfTilt;
+  static const IconData cloudOk = PhosphorIconsRegular.cloudCheck;
+  static const IconData cloudOff = PhosphorIconsRegular.cloudSlash;
+  static const IconData battery = PhosphorIconsRegular.batteryHigh;
+  static const IconData batterySaver = PhosphorIconsRegular.batteryLow;
 }

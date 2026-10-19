@@ -155,10 +155,11 @@ for index, apk in enumerate(apk_files):
         version_label = apk.stem
 
     size_bytes = apk.stat().st_size
-    if size_bytes >= 1024 * 1024:
-        file_size = f"{size_bytes / (1024 * 1024):.1f} MB"
+
+    if size_bytes >= 1_048_576:
+        file_size = f"{size_bytes / 1_048_576:.2f} MB"
     else:
-        file_size = f"{size_bytes / 1024:.0f} KB"
+        file_size = f"{size_bytes / 1_024:.1f} KB"
 
     safe_version = html.escape(version_label)
     safe_filename = html.escape(filename)
@@ -357,25 +358,70 @@ page = """<!doctype html>
     .snackbar {
       position: fixed;
       left: 50%;
-      bottom: 24px;
+      bottom: max(24px, env(safe-area-inset-bottom));
       z-index: 1000;
+
+      display: flex;
+      align-items: center;
+      gap: 12px;
+
       width: max-content;
       max-width: calc(100% - 32px);
-      padding: 12px 18px;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      background: var(--surface);
-      color: var(--text);
-      box-shadow: 0 8px 28px #0003;
+      min-height: 64px;
+      padding: 16px 22px;
+
+      border: 1px solid #ffffff40;
+      border-radius: 16px;
+
+      background: var(--accent);
+      color: var(--button-text);
+
+      font-size: 15px;
+      font-weight: 750;
+      line-height: 1.4;
+
+      box-shadow: 0 12px 36px #0004;
+
       opacity: 0;
+      visibility: hidden;
       pointer-events: none;
-      transform: translate(-50%, 12px);
-      transition: opacity 180ms ease, transform 180ms ease;
+      transform: translate(-50%, 16px);
+
+      transition:
+        opacity 200ms ease,
+        transform 200ms ease,
+        visibility 200ms;
+    }
+
+    .snackbar::before {
+      content: "↓";
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+
+      background: #ffffff30;
+      color: inherit;
+
+      font-size: 25px;
+      font-weight: 800;
     }
 
     .snackbar.visible {
       opacity: 1;
+      visibility: visible;
       transform: translate(-50%, 0);
+    }
+
+
+    @media (prefers-reduced-motion: reduce) {
+      .download,
+      .snackbar {
+        transition: none;
+      }
     }
 
     @media (max-width: 440px) {
@@ -386,9 +432,6 @@ page = """<!doctype html>
       .download { width: 100%; }
     }
 
-    @media (prefers-reduced-motion: reduce) {
-      .download, .snackbar { transition: none; }
-    }
   </style>
 </head>
 
@@ -429,7 +472,9 @@ page = """<!doctype html>
     }
 
     function startDownload(link) {
-      showSnackbar('Download started!');
+      showSnackbar(
+        'Download started — check your browser downloads.'
+      );
     }
   </script>
 </body>
@@ -448,6 +493,23 @@ PYTHON
 # --------------------------------------------------
 # 8. Verify deployment artifacts
 # --------------------------------------------------
+
+# Verify every source APK was copied to the deployment output.
+for apk in "${SOURCE_DOWNLOAD_DIR}"/*.apk; do
+  [ -f "${apk}" ] || continue
+
+  output_apk="${OUTPUT_DOWNLOAD_DIR}/$(basename "${apk}")"
+
+  if [ ! -f "${output_apk}" ]; then
+    echo "ERROR: APK missing from deployment output: ${output_apk}"
+    exit 1
+  fi
+
+  if ! cmp -s "${apk}" "${output_apk}"; then
+    echo "ERROR: APK differs from source: ${output_apk}"
+    exit 1
+  fi
+done
 
 if [ ! -f "${WEB_OUTPUT_DIR}/index.html" ]; then
   echo "ERROR: Flutter web index.html was not generated."

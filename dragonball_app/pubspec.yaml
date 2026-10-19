@@ -1,7 +1,7 @@
 name: dragonball_app
 description: A Dragon Ball Explorer demonstrating Riverpod and Flutter Hooks.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
-version: 1.0.0+6
+version: 1.0.0+7
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -14,6 +14,8 @@ environment:
 # versions available, run `flutter pub outdated`.
 dependencies:
   flutter:
+    sdk: flutter
+  flutter_localizations:
     sdk: flutter
 
   # The following adds the Cupertino Icons font to your application.

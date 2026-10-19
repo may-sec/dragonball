@@ -5,11 +5,13 @@ import '../../../core/design/app_icons.dart';
 import '../../../core/design/app_tokens.dart';
 import '../../../core/design/category_style.dart';
 import '../../../core/l10n/language_provider.dart';
+import '../../../widgets/catalog_status_banner.dart';
 import '../../../widgets/character_card.dart';
 import '../../../widgets/shared_widgets.dart';
 import '../../dragonball/models/dragonball_models.dart';
 import '../../dragonball/presentation/catalog_components.dart' show CatalogSkeleton;
 import '../../dragonball/presentation/navigation_path.dart';
+import 'catalog_provider.dart';
 import 'explore_providers.dart';
 
 // LEARN (the Explore screen touches many topics, each marked below):
@@ -23,6 +25,8 @@ import 'explore_providers.dart';
 //  * AnimatedSize: the chip row slides in and out when the mode changes.
 //  * LayoutBuilder + mainAxisExtent: responsive columns, and card heights
 //    that grow with the user's text size (no overflow at "Largest").
+//  * RefreshIndicator: pull-to-refresh needs a scrollable that ALWAYS accepts
+//    the drag, even when the list is shorter than the screen.
 class ExploreScreen extends ConsumerStatefulWidget {
   const ExploreScreen({super.key});
 
@@ -40,6 +44,10 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     _search.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  Future<void> _refresh() {
+    return ref.read(catalogProvider.notifier).refresh(force: true);
   }
 
   void _open(List<Character> visible, int index, ExploreSelection sel) {
@@ -195,6 +203,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                     ),
             ),
 
+            // ---- refreshing / offline / partial data ------------------------
+            const CatalogStatusBanner(),
+
             // ---- count -------------------------------------------------------
             if (allAsync.hasValue)
               Padding(
@@ -228,7 +239,10 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                   title: s.loadFailed,
                   message: error.toString(),
                   actionLabel: s.retry,
-                  onAction: () => ref.invalidate(allCharactersProvider),
+                  // The old `ref.invalidate(allCharactersProvider)` would now
+                  // only recompute a derived value. Ask the catalog to check
+                  // the server instead.
+                  onAction: _refresh,
                 ),
                 data: (_) {
                   if (visible.isEmpty) {
@@ -240,7 +254,10 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                       onAction: controller.reset,
                     );
                   }
-                  return _buildList(context, visible, sel);
+                  return RefreshIndicator(
+                    onRefresh: _refresh,
+                    child: _buildList(context, visible, sel),
+                  );
                 },
               ),
             ),
@@ -267,6 +284,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 
           return GridView.builder(
             controller: _scroll,
+            physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(AppSpace.x3),
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: columns,
@@ -289,6 +307,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 
         return ListView.separated(
           controller: _scroll,
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(AppSpace.x3),
           itemCount: visible.length,
           separatorBuilder: (_, __) => const SizedBox(height: AppSpace.x2),

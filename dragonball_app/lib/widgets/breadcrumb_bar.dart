@@ -10,7 +10,8 @@ import '../features/dragonball/presentation/navigation_path.dart';
 //  * The LAST crumb is the current page (bold, not tappable); earlier crumbs
 //    are links that run Crumb.onTap.
 //  * AnimatedSwitcher cross-fades the last crumb when you swipe to another
-//    character, with no controller needed.
+//    character, with no controller needed. Its duration goes through
+//    AppMotion.resolve, so it becomes instant when motion is reduced.
 //  * One Semantics label reads the whole path to a screen reader.
 class BreadcrumbBar extends StatelessWidget {
   const BreadcrumbBar({super.key, required this.crumbs, this.trailing});
@@ -53,7 +54,8 @@ class BreadcrumbBar extends StatelessWidget {
                         ),
                       if (i == last)
                         AnimatedSwitcher(
-                          duration: AppMotion.base,
+                          duration:
+                              AppMotion.resolve(context, AppMotion.base),
                           child: Padding(
                             key: ValueKey<String>(crumbs[i].label),
                             padding: const EdgeInsets.symmetric(

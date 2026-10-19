@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,6 +12,8 @@ class AppSettings {
   const AppSettings({
     this.isLoaded = false,
     this.themeMode = ThemeMode.system,
+    this.trueBlack = false,
+    this.adaptToPowerSaver = true,
     this.accentColor = 'orange',
     this.animationsEnabled = true,
     this.charactersGridView = true,
@@ -29,6 +30,16 @@ class AppSettings {
 
   final bool isLoaded;
   final ThemeMode themeMode;
+
+  /// Pure black (#000000) instead of dark grey when the DARK theme is active.
+  /// On OLED screens black pixels are switched off, which can save battery.
+  /// It has no effect on the light theme.
+  final bool trueBlack;
+
+  /// Let the app dial things down (motion, preloading, background checks)
+  /// while Android battery saver is on. On by default, but the USER decides.
+  final bool adaptToPowerSaver;
+
   final String accentColor;
   final bool animationsEnabled;
 
@@ -56,6 +67,8 @@ class AppSettings {
   AppSettings copyWith({
     bool? isLoaded,
     ThemeMode? themeMode,
+    bool? trueBlack,
+    bool? adaptToPowerSaver,
     String? accentColor,
     bool? animationsEnabled,
     bool? charactersGridView,
@@ -72,17 +85,16 @@ class AppSettings {
     return AppSettings(
       isLoaded: isLoaded ?? this.isLoaded,
       themeMode: themeMode ?? this.themeMode,
+      trueBlack: trueBlack ?? this.trueBlack,
+      adaptToPowerSaver: adaptToPowerSaver ?? this.adaptToPowerSaver,
       accentColor: accentColor ?? this.accentColor,
       animationsEnabled: animationsEnabled ?? this.animationsEnabled,
-      charactersGridView:
-          charactersGridView ?? this.charactersGridView,
+      charactersGridView: charactersGridView ?? this.charactersGridView,
       planetsGridView: planetsGridView ?? this.planetsGridView,
-      favoritesGridView:
-          favoritesGridView ?? this.favoritesGridView,
+      favoritesGridView: favoritesGridView ?? this.favoritesGridView,
       compactCards: compactCards ?? this.compactCards,
       catalogSortOrder: catalogSortOrder ?? this.catalogSortOrder,
-      favoritesSortOrder:
-          favoritesSortOrder ?? this.favoritesSortOrder,
+      favoritesSortOrder: favoritesSortOrder ?? this.favoritesSortOrder,
       defaultTab: defaultTab ?? this.defaultTab,
       textScale: textScale ?? this.textScale,
       reducedMotion: reducedMotion ?? this.reducedMotion,
@@ -93,6 +105,8 @@ class AppSettings {
 
 class AppSettingsController extends Notifier<AppSettings> {
   static const _themeKey = 'app_theme_mode';
+  static const _trueBlackKey = 'app_true_black';
+  static const _adaptPowerKey = 'app_adapt_power_saver';
   static const _accentKey = 'app_accent_color';
   static const _animationsKey = 'app_animations_enabled';
 
@@ -132,26 +146,20 @@ class AppSettingsController extends Notifier<AppSettings> {
           'dark' => ThemeMode.dark,
           _ => ThemeMode.system,
         },
+        trueBlack: prefs.getBool(_trueBlackKey) ?? false,
+        adaptToPowerSaver: prefs.getBool(_adaptPowerKey) ?? true,
         accentColor: _validAccent(prefs.getString(_accentKey)),
-        animationsEnabled:
-            prefs.getBool(_animationsKey) ?? true,
-        charactersGridView:
-            prefs.getBool(_charactersGridKey) ?? true,
-        planetsGridView:
-            prefs.getBool(_planetsGridKey) ?? true,
-        favoritesGridView:
-            prefs.getBool(_favoritesGridKey) ?? true,
+        animationsEnabled: prefs.getBool(_animationsKey) ?? true,
+        charactersGridView: prefs.getBool(_charactersGridKey) ?? true,
+        planetsGridView: prefs.getBool(_planetsGridKey) ?? true,
+        favoritesGridView: prefs.getBool(_favoritesGridKey) ?? true,
         compactCards: prefs.getBool(_compactCardsKey) ?? false,
-        catalogSortOrder: _validCatalogSort(
-          prefs.getString(_catalogSortKey),
-        ),
-        favoritesSortOrder: _validFavoritesSort(
-          prefs.getString(_favoritesSortKey),
-        ),
+        catalogSortOrder: _validCatalogSort(prefs.getString(_catalogSortKey)),
+        favoritesSortOrder:
+            _validFavoritesSort(prefs.getString(_favoritesSortKey)),
         defaultTab: _validTab(prefs.getInt(_defaultTabKey)),
         textScale: _validTextScale(prefs.getDouble(_textScaleKey)),
-        reducedMotion:
-            prefs.getBool(_reducedMotionKey) ?? false,
+        reducedMotion: prefs.getBool(_reducedMotionKey) ?? false,
         highContrast: prefs.getBool(_highContrastKey) ?? false,
       );
 
@@ -185,8 +193,7 @@ class AppSettingsController extends Notifier<AppSettings> {
       value != null && value >= 0 && value <= 3 ? value : 0;
 
   double _validTextScale(double? value) =>
-      value != null &&
-              const [0.9, 1.0, 1.15, 1.3].contains(value)
+      value != null && const [0.9, 1.0, 1.15, 1.3].contains(value)
           ? value
           : 1.0;
 
@@ -218,6 +225,16 @@ class AppSettingsController extends Notifier<AppSettings> {
         ThemeMode.system => 'system',
       },
     );
+  }
+
+  void setTrueBlack(bool value) {
+    _change(state.copyWith(trueBlack: value));
+    _save(_trueBlackKey, value);
+  }
+
+  void setAdaptToPowerSaver(bool value) {
+    _change(state.copyWith(adaptToPowerSaver: value));
+    _save(_adaptPowerKey, value);
   }
 
   void setAccentColor(String value) {
@@ -272,8 +289,7 @@ class AppSettingsController extends Notifier<AppSettings> {
   }
 
   void setTextScale(double value) {
-    if (!_validTextScale(value).isFinite ||
-        _validTextScale(value) != value) {
+    if (!_validTextScale(value).isFinite || _validTextScale(value) != value) {
       return;
     }
     _change(state.copyWith(textScale: value));
@@ -303,6 +319,8 @@ class AppSettingsController extends Notifier<AppSettings> {
       final prefs = await SharedPreferences.getInstance();
       for (final key in [
         _themeKey,
+        _trueBlackKey,
+        _adaptPowerKey,
         _accentKey,
         _animationsKey,
         _charactersGridKey,

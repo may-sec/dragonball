@@ -1,12 +1,15 @@
-import 'package:dragonball_app/widgets/build_character_image.dart';
 import 'package:flutter/material.dart';
+
+import '../../../core/design/app_colors.dart';
+import '../../../core/design/app_tokens.dart';
+import '../../../widgets/build_character_image.dart';
+import '../../../widgets/motion_hero.dart';
 
 class FullScreenImageItem {
   const FullScreenImageItem({
     required this.imageUrl,
     required this.heroTag,
     required this.title,
-    
   });
 
   final String imageUrl;
@@ -26,18 +29,15 @@ class FullScreenImageViewer extends StatefulWidget {
   final List<FullScreenImageItem> images;
   final int initialIndex;
   final VoidCallback? onBeforePop;
-  
 
   // Shared with the transformation carousel.
   final ValueNotifier<int>? pageNotifier;
 
   @override
-  State<FullScreenImageViewer> createState() =>
-      _FullScreenImageViewerState();
+  State<FullScreenImageViewer> createState() => _FullScreenImageViewerState();
 }
 
-class _FullScreenImageViewerState
-    extends State<FullScreenImageViewer> {
+class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
   late final PageController _pageController;
   late int _currentPageIndex;
   late int _currentIndex;
@@ -54,9 +54,7 @@ class _FullScreenImageViewerState
     _currentIndex = _initialIndex;
 
     final initialPage = widget.pageNotifier?.value ??
-        (_hasMultipleImages
-            ? widget.images.length * 1000 + _currentIndex
-            : 0);
+        (_hasMultipleImages ? widget.images.length * 1000 + _currentIndex : 0);
 
     _currentPageIndex = initialPage;
     _pageController = PageController(initialPage: initialPage);
@@ -90,9 +88,21 @@ class _FullScreenImageViewerState
       return;
     }
 
+    // LEARN: animateToPage with Duration.zero would still schedule an
+    // animation. When motion is reduced we jump instead.
+    final duration = AppMotion.resolve(
+      context,
+      const Duration(milliseconds: 750),
+    );
+
+    if (duration == Duration.zero) {
+      _pageController.jumpToPage(target);
+      return;
+    }
+
     _pageController.animateToPage(
       target,
-      duration: const Duration(milliseconds: 750),
+      duration: duration,
       curve: Curves.easeInOutCubicEmphasized,
     );
   }
@@ -128,7 +138,7 @@ class _FullScreenImageViewerState
     // Only the currently visible page should own this Hero tag.
     if (pageIndex == _currentPageIndex) {
       return Center(
-        child: Hero(
+        child: MotionHero(
           tag: image.heroTag,
           child: imageWidget,
         ),
@@ -143,7 +153,7 @@ class _FullScreenImageViewerState
     final item = widget.images[_currentIndex];
 
     return Scaffold(
-      backgroundColor: const Color(0xFF090B12),
+      backgroundColor: AppColors.of(context).viewerBackground,
       body: SafeArea(
         child: Stack(
           children: [
@@ -164,8 +174,7 @@ class _FullScreenImageViewerState
                         }
                       },
                       itemBuilder: (context, pageIndex) {
-                        final index =
-                            pageIndex % widget.images.length;
+                        final index = pageIndex % widget.images.length;
                         return _buildImage(index, pageIndex);
                       },
                     )
@@ -212,7 +221,7 @@ class _FullScreenImageViewerState
               right: 20,
               bottom: 24,
               child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 250),
+                duration: AppMotion.resolve(context, AppMotion.base),
                 switchInCurve: Curves.easeOut,
                 switchOutCurve: Curves.easeIn,
                 transitionBuilder: (child, animation) {
@@ -232,9 +241,9 @@ class _FullScreenImageViewerState
                   key: ValueKey(item.title),
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
                 ),
               ),
             ),

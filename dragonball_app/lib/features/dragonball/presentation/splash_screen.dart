@@ -1,11 +1,25 @@
-import 'package:dragonball_app/features/dragonball/models/dragonball_models.dart';
-import 'package:dragonball_app/widgets/image_preloader.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/platform/experience_policy.dart';
+import '../../../widgets/image_preloader.dart';
 import 'dragonball_home_screen.dart';
 import 'dragonball_notifier.dart';
+import 'dragonball_state.dart';
 
+// =============================================================================
+// LEARN (what a splash screen may wait for):
+// Only what is needed to draw the first useful frame. Here that is the catalog
+// from DISK (instant) or, on a first launch with nothing saved, one network
+// attempt. It must NOT wait for:
+//   * the background "is the server data newer?" check (isRefreshing), or
+//   * every image on a slow connection.
+// Image preloading is a nicety, so it gets a TIME BUDGET: Future.timeout throws
+// a TimeoutException when the budget is spent, we ignore it and move on. The
+// downloads keep running; the cards simply show their own placeholders.
+// =============================================================================
 class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
 
@@ -14,72 +28,62 @@ class SplashScreen extends ConsumerStatefulWidget {
 }
 
 class _SplashScreenState extends ConsumerState<SplashScreen> {
-  bool _navigationScheduled = false;
-  bool _preloadStarted = false;
-  bool _imagesReady = false;
+  static const Duration _imageBudget = Duration(seconds: 2);
+
+  // Only what is visible on the first screen is worth waiting for.
+  static const int _preloadCharacters = 12;
+  static const int _preloadPlanets = 4;
+
+  bool _continueStarted = false;
+
+  Future<void> _preloadThenContinue(DragonBallState data) async {
+    // Battery saver: skip warming the image cache. Cards load their own
+    // images, just a moment later.
+    final preload = ref.read(experiencePolicyProvider).preloadImages;
+
+    final urls = <String>[
+      if (preload) ...[
+        for (final c in data.characters.take(_preloadCharacters)) c.imageUrl,
+        for (final p in data.planets.take(_preloadPlanets)) p.imageUrl,
+      ],
+    ];
+
+    try {
+      await preloadImageUrls(context, urls).timeout(_imageBudget);
+    } on TimeoutException {
+      // Slow or offline: carry on without waiting.
+    }
+
+    if (!mounted) return;
+
+    await Navigator.of(context).pushReplacement(
+      PageRouteBuilder<void>(
+        pageBuilder: (_, animation, secondaryAnimation) =>
+            const DragonBallHomeScreen(),
+        transitionsBuilder: (_, animation, secondaryAnimation, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+        transitionDuration: const Duration(milliseconds: 350),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-
-    // Start loading the catalogues while the splash screen is visible.
     final catalog = ref.watch(dragonBallControllerProvider);
     final data = catalog.asData?.value;
 
-    final isLoadingCharacters =
-        data?.isLoadingCharacters ?? true;
-    final isLoadingPlanets =
-        data?.isLoadingPlanets ?? true;
+    // "Loading" only means "nothing to show yet" (see DragonBallController),
+    // so a stale-but-usable catalog does not hold the splash.
+    final isReady =
+        data != null && !data.isLoadingCharacters && !data.isLoadingPlanets;
 
-    Future<void> _prepareInitialImages(
-      List<Character> characters,
-      List<Planet> planets,
-    ) async {
-      await preloadImageUrls(
-        context,
-        [
-          ...characters.map((character) => character.imageUrl),
-          ...planets.map((planet) => planet.imageUrl),
-        ],
-      );
-
-      if (mounted) {
-        setState(() => _imagesReady = true);
-      }
-    }    
-
-    // Navigate only after both initial catalogue requests have finished.
-    // Failed requests also finish loading, allowing the home screen
-    // to display its existing error and retry UI.
-    final isReady = data != null &&
-        !isLoadingCharacters &&
-        !isLoadingPlanets;
-
-    if (isReady && !_preloadStarted) {
-      _preloadStarted = true;
-
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || data == null) return;
-
-        _prepareInitialImages(data.characters, data.planets);
-      });
-    }
-
-    if (isReady && _imagesReady && !_navigationScheduled) {
-      _navigationScheduled = true;
+    if (isReady && !_continueStarted) {
+      _continueStarted = true;
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-
-        Navigator.of(context).pushReplacement(
-          PageRouteBuilder<void>(
-            pageBuilder: (_, animation, secondaryAnimation) =>
-                const DragonBallHomeScreen(),
-            transitionsBuilder: (_, animation, secondaryAnimation, child) {
-              return FadeTransition(opacity: animation, child: child);
-            },
-            transitionDuration: const Duration(milliseconds: 350),
-          ),
-        );
+        unawaited(_preloadThenContinue(data));
       });
     }
 
@@ -87,17 +91,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     final colors = theme.colorScheme;
 
     final String status;
-    if (data == null ||
-        (isLoadingCharacters && isLoadingPlanets)) {
+    if (data == null) {
       status = 'Loading characters and planets...';
-    } else if (isLoadingCharacters) {
-      status = 'Loading characters...';
-    } else if (isLoadingPlanets) {
-      status = 'Loading planets...';
+    } else if (data.characters.isEmpty && data.characterError != null) {
+      status = 'No connection. Opening...';
     } else {
       status = 'Preparing your universe...';
     }
-
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,

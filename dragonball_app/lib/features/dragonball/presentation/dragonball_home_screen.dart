@@ -1,58 +1,48 @@
-import 'package:dragonball_app/features/dragonball/presentation/app_settings.dart';
-import 'package:dragonball_app/features/dragonball/presentation/character_filter_sheet.dart';
-import 'package:dragonball_app/features/dragonball/presentation/settings_screen.dart';
-import 'package:dragonball_app/widgets/build_character_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import '../../../core/design/app_colors.dart';
+import '../../../core/design/app_icons.dart';
+import '../../../core/design/app_tokens.dart';
+import '../../../core/l10n/language_provider.dart';
+import '../../../widgets/catalog_status_banner.dart';
+import '../../../widgets/character_card.dart';
+import '../../../widgets/planet_card.dart';
+import '../../../widgets/shared_widgets.dart';
 import '../models/dragonball_models.dart';
+import 'app_settings.dart';
 import 'catalog_components.dart';
-import 'character_detail_view.dart';
+import 'catalog_provider.dart';
+import 'catalog_views.dart';
+import 'character_filter_sheet.dart';
 import 'dragonball_notifier.dart';
 import 'dragonball_state.dart';
-import 'planet_detail_view.dart';
-import 'search_debouncer.dart';
-
-import 'package:dragonball_app/core/design/app_icons.dart';
-import 'package:dragonball_app/core/l10n/language_provider.dart';
 import 'explore_screen.dart';
+import 'navigation_path.dart';
+import 'planet_detail_view.dart';
+import 'settings_screen.dart';
 
+// =============================================================================
+// DragonBallHomeScreen (migrated to the design system)
+//
+// LEARN (what changed and why):
+//  * Every visible word comes from AppStrings, every icon from AppIcons, every
+//    spacing from AppSpace, every column count from Breakpoints. Switching the
+//    app language now changes THIS screen too.
+//  * One FavoriteHeart, one card per kind of item (character_card.dart,
+//    planet_card.dart), one MessageBlock for empty / error states. The private
+//    duplicates that used to live in this file are gone (~600 lines).
+//  * Search filters LOCALLY (the whole catalogue is already loaded), so it
+//    needs no debouncer and makes no request.
+//  * Sorting no longer happens inside build(): see catalog_views.dart.
+//  * Characters and Favorites open the detail screen WITH a nav context:
+//    swipe to the next / previous character and a breadcrumb path.
+//  * Hooks: useRef remembers "did I already apply the default tab?" across
+//    rebuilds without causing one.
+// =============================================================================
 class DragonBallHomeScreen extends HookConsumerWidget {
   const DragonBallHomeScreen({super.key});
-
-  static const _races = [
-    'ALL',
-    'Saiyan',
-    'Human',
-    'Namekian',
-    'Majin',
-    'Frieza Race',
-    'Android',
-    'Jiren Race',
-    'God',
-    'Angel',
-    'Evil',
-  ];
-
-  static const _genders = [
-    'ALL',
-    'Male',
-    'Female',
-    'Unknown',
-  ];
-
-  static const _affiliations = [
-    'ALL',
-    'Z Fighter',
-    'Red Ribbon Army',
-    'Namekian Warrior',
-    'Freelancer',
-    'Army of Frieza',
-    'Pride Troopers',
-    'Villain',
-    'Other',
-  ];
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -69,66 +59,37 @@ class DragonBallHomeScreen extends HookConsumerWidget {
     final characterScrollController = useScrollController();
     final planetScrollController = useScrollController();
 
-    // Reuse one debouncer for this widget's lifetime.
-    final characterDebouncer = useMemoized(SearchDebouncer.new);
-    final planetDebouncer = useMemoized(SearchDebouncer.new);
-
-
     final settings = ref.watch(appSettingsProvider);
+    final s = ref.watch(stringsProvider);
 
     final selectedTab = useState(0);
 
-    final characterGridView = settings.charactersGridView;
-    final planetGridView = settings.planetsGridView;
-    final favoritesGridView = settings.favoritesGridView;
+    // Apply the saved "default tab" ONCE, when settings finish loading.
+    // (Before, the effect also depended on settings.defaultTab, so changing
+    // that setting in the Settings screen switched the tab behind it.)
+    final appliedDefaultTab = useRef(false);
 
     useEffect(() {
-      if (settings.isLoaded) {
+      if (settings.isLoaded && !appliedDefaultTab.value) {
+        appliedDefaultTab.value = true;
         selectedTab.value = settings.defaultTab;
       }
 
       return null;
-    }, [settings.isLoaded, settings.defaultTab]);
+    }, [settings.isLoaded]);
 
-    useEffect(() {
-      return characterDebouncer.dispose;
-    }, [characterDebouncer]);
-
-    useEffect(() {
-      return planetDebouncer.dispose;
-    }, [planetDebouncer]);
-
-    // Register and clean up scroll listeners with the widget lifecycle.
+    // Scrolling a list dismisses the keyboard. Registered and removed with the
+    // widget lifecycle.
     useEffect(() {
       void onCharacterScroll() {
         if (characterSearchFocusNode.hasFocus) {
           characterSearchFocusNode.unfocus();
-        }
-
-        if (!characterScrollController.hasClients) return;
-
-        final position = characterScrollController.position;
-
-        if (position.pixels >= position.maxScrollExtent - 240) {
-          ref
-              .read(dragonBallControllerProvider.notifier)
-              .loadNextCharacters();
         }
       }
 
       void onPlanetScroll() {
         if (planetSearchFocusNode.hasFocus) {
           planetSearchFocusNode.unfocus();
-        }
-
-        if (!planetScrollController.hasClients) return;
-
-        final position = planetScrollController.position;
-
-        if (position.pixels >= position.maxScrollExtent - 240) {
-          ref
-              .read(dragonBallControllerProvider.notifier)
-              .loadNextPlanets();
         }
       }
 
@@ -155,40 +116,30 @@ class DragonBallHomeScreen extends HookConsumerWidget {
 
         if (newState == null) return;
 
+        final strings = ref.read(stringsProvider);
         final messages = <String>[];
 
         final characterError = newState.characterError;
-        final characterErrorChanged =
-            characterError != null &&
-            characterError != oldState?.characterError;
-
-        if (characterErrorChanged && newState.characters.isNotEmpty) {
-          messages.add('Characters: $characterError');
+        if (characterError != null &&
+            characterError != oldState?.characterError &&
+            newState.characters.isNotEmpty) {
+          messages.add(strings.charactersError(characterError));
         }
 
         final planetError = newState.planetError;
-        final planetErrorChanged =
-            planetError != null &&
-            planetError != oldState?.planetError;
-
-        if (planetErrorChanged && newState.planets.isNotEmpty) {
-          messages.add('Planets: $planetError');
+        if (planetError != null &&
+            planetError != oldState?.planetError &&
+            newState.planets.isNotEmpty) {
+          messages.add(strings.planetsError(planetError));
         }
 
         if (messages.isEmpty) return;
 
-        final messenger = ScaffoldMessenger.of(context);
-
-        messenger
+        ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text(messages.join('\n')),
-            ),
-          );
+          ..showSnackBar(SnackBar(content: Text(messages.join('\n'))));
       },
     );
-
 
     final catalogAsync = ref.watch(dragonBallControllerProvider);
 
@@ -197,42 +148,36 @@ class DragonBallHomeScreen extends HookConsumerWidget {
       dragonBallFavoritesProvider.select((ids) => ids.length),
     );
 
-    final s = ref.watch(stringsProvider);
-
     final titles = <(String, String)>[
-      ('Warrior database', 'Explore fighters and villains'),
+      (s.charactersTitle, s.charactersSubtitle),
       (s.exploreTitle, s.exploreSubtitle),
-      ('Cosmic atlas', 'Explore worlds across the universe'),
-      ('Favorite warriors', 'Your saved characters'),
+      (s.planetsTitle, s.planetsSubtitle),
+      (s.favoritesTitle, s.favoritesSubtitle),
     ];
 
     final (title, subtitle) = titles[selectedTab.value];
+
+    final controller = ref.read(dragonBallControllerProvider.notifier);
 
     return Scaffold(
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              title,
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            Text(
-              subtitle,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+            Text(title, style: Theme.of(context).textTheme.titleLarge),
+            Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
           ],
         ),
         actions: [
           Tooltip(
-            message: 'Favorite characters in the current catalogue',
+            message: s.favoritesCountTooltip,
             child: Padding(
-              padding: const EdgeInsets.only(right: 4),
+              padding: const EdgeInsets.only(right: AppSpace.x1),
               child: Center(
                 child: Chip(
-                  avatar: const Icon(
-                    Icons.favorite,
-                    color: Colors.red,
+                  avatar: Icon(
+                    AppIcons.heartFill,
+                    color: AppColors.of(context).favorite,
                     size: 16,
                   ),
                   label: Text('$favoriteCount'),
@@ -242,7 +187,7 @@ class DragonBallHomeScreen extends HookConsumerWidget {
             ),
           ),
           IconButton(
-            tooltip: 'Settings',
+            tooltip: s.settingsTooltip,
             onPressed: () {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
@@ -250,145 +195,105 @@ class DragonBallHomeScreen extends HookConsumerWidget {
                 ),
               );
             },
-            icon: const Icon(Icons.settings_outlined),
+            icon: const Icon(AppIcons.settings),
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: AppSpace.x1),
         ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: selectedTab.value,
-        onDestinationSelected: (index) {
-          selectedTab.value = index;
-        },
+        onDestinationSelected: (index) => selectedTab.value = index,
         destinations: [
-          const NavigationDestination(
-            icon: Icon(Icons.people_outline),
-            selectedIcon: Icon(Icons.people),
-            label: 'Characters',
+          NavigationDestination(
+            icon: const Icon(AppIcons.characters),
+            selectedIcon: const Icon(AppIcons.charactersFill),
+            label: s.tabCharacters,
           ),
           NavigationDestination(
             icon: const Icon(AppIcons.explore),
             selectedIcon: const Icon(AppIcons.exploreFill),
             label: s.tabExplore,
           ),
-          const NavigationDestination(
-            icon: Icon(Icons.public_outlined),
-            selectedIcon: Icon(Icons.public),
-            label: 'Planets',
+          NavigationDestination(
+            icon: const Icon(AppIcons.planet),
+            selectedIcon: const Icon(AppIcons.planetFill),
+            label: s.tabPlanets,
           ),
-          const NavigationDestination(
-            icon: Icon(Icons.favorite_border),
-            selectedIcon: Icon(Icons.favorite),
-            label: 'Favorites',
+          NavigationDestination(
+            icon: const Icon(AppIcons.favorites),
+            selectedIcon: const Icon(AppIcons.favoritesFill),
+            label: s.tabFavorites,
           ),
         ],
       ),
       body: catalogAsync.when(
-        loading: () => const Center(
-          child: CircularProgressIndicator.adaptive(),
-        ),
-        error: (error, _) => _FullErrorView(
+        loading: () => const Center(child: CircularProgressIndicator.adaptive()),
+        error: (error, _) => MessageBlock(
+          icon: AppIcons.offline,
+          title: s.loadFailed,
           message: error.toString(),
-          onRetry: () {
-            ref.invalidate(dragonBallControllerProvider);
-          },
+          actionLabel: s.retry,
+          onAction: () => ref.invalidate(dragonBallControllerProvider),
         ),
         data: (state) => IndexedStack(
           index: selectedTab.value,
           children: [
             _CharacterTab(
               state: state,
-              isGridView: characterGridView,
-              sortOrder: settings.catalogSortOrder,
+              isGridView: settings.charactersGridView,
               searchFocusNode: characterSearchFocusNode,
               searchController: characterSearchController,
               searchQuery: characterQuery.value,
               scrollController: characterScrollController,
+              // Local filter: instant, no request, nothing to debounce.
               onSearchChanged: (query) {
                 characterQuery.value = query;
-                characterDebouncer.run(
-                  const Duration(milliseconds: 350),
-                  () {
-                    ref
-                        .read(dragonBallControllerProvider.notifier)
-                        .applyCharacterFilters(name: query);
-                  },
-                );
+                controller.applyCharacterFilters(name: query);
               },
-              onOpenFilters: () {
-                _showCharacterFilterSheet(
-                  context,
-                  ref,
-                  onResetSearch: () {
-                    characterDebouncer.cancel();
-                    characterSearchController.clear();
-                    characterQuery.value = '';
-                  },
-                );
-              },
-              onRetry: () => ref
-                  .read(dragonBallControllerProvider.notifier)
-                  .applyCharacterFilters(),
-              
+              onOpenFilters: () => _showCharacterFilterSheet(
+                context,
+                ref,
+                onResetSearch: () {
+                  characterSearchController.clear();
+                  characterQuery.value = '';
+                },
+              ),
+              onRetry: controller.refresh,
               onReset: () {
-                characterDebouncer.cancel();
                 characterSearchController.clear();
                 characterQuery.value = '';
-
-                ref
-                    .read(dragonBallControllerProvider.notifier)
-                    .resetCharacterFilters();
+                controller.resetCharacterFilters();
               },
             ),
             const ExploreScreen(),
             _PlanetTab(
               state: state,
-              isGridView: planetGridView,
-              sortOrder: settings.catalogSortOrder,
+              isGridView: settings.planetsGridView,
               searchFocusNode: planetSearchFocusNode,
               searchController: planetSearchController,
               searchQuery: planetQuery.value,
               scrollController: planetScrollController,
               onSearchChanged: (query) {
                 planetQuery.value = query;
-                planetDebouncer.run(
-                  const Duration(milliseconds: 350),
-                  () {
-                    ref
-                        .read(dragonBallControllerProvider.notifier)
-                        .applyPlanetFilters(name: query);
-                  },
-                );
+                controller.applyPlanetFilters(name: query);
               },
               onDestroyedChanged: (bool? destroyed) {
-                final controller =
-                    ref.read(dragonBallControllerProvider.notifier);
-
                 if (destroyed == null) {
                   controller.applyPlanetFilters(clearDestroyedFilter: true);
                 } else {
                   controller.applyPlanetFilters(isDestroyedFilter: destroyed);
                 }
               },
-              onRetry: () => ref
-                  .read(dragonBallControllerProvider.notifier)
-                  .applyPlanetFilters(),
+              onRetry: controller.refresh,
               onReset: () {
-                planetDebouncer.cancel();
                 planetSearchController.clear();
                 planetQuery.value = '';
-
-                ref
-                    .read(dragonBallControllerProvider.notifier)
-                    .resetPlanetFilters();
+                controller.resetPlanetFilters();
               },
             ),
             _FavoritesTab(
-              isGridView: favoritesGridView,
-              sortOrder: settings.favoritesSortOrder,
-              onBrowseCharacters: () {
-                selectedTab.value = 0;
-              },
+              isGridView: settings.favoritesGridView,
+              onBrowseCharacters: () => selectedTab.value = 0,
             ),
           ],
         ),
@@ -396,31 +301,35 @@ class DragonBallHomeScreen extends HookConsumerWidget {
     );
   }
 
-  
-  
+  /// Option lists come from the catalog itself, so a new race / affiliation
+  /// in the API appears here without editing a hard-coded list.
   void _showCharacterFilterSheet(
     BuildContext context,
     WidgetRef ref, {
     required VoidCallback onResetSearch,
   }) {
-    final currentState = ref
-        .read(dragonBallControllerProvider)
-        .asData
-        ?.value;
-
+    final currentState = ref.read(dragonBallControllerProvider).asData?.value;
     if (currentState == null) return;
 
-    final controller =
-        ref.read(dragonBallControllerProvider.notifier);
+    final all = ref.read(catalogProvider).asData?.value.characters.items ??
+        const <Character>[];
+
+    List<String> options(String Function(Character c) pick) => [
+          kFilterAll,
+          ...({for (final c in all) pick(c)}.toList()..sort()),
+        ];
+
+    final controller = ref.read(dragonBallControllerProvider.notifier);
 
     showCharacterFilterSheet(
       context: context,
+      strings: ref.read(stringsProvider),
       selectedRace: currentState.selectedRace,
       selectedGender: currentState.selectedGender,
       selectedAffiliation: currentState.selectedAffiliation,
-      races: _races,
-      genders: _genders,
-      affiliations: _affiliations,
+      races: options((c) => c.race),
+      genders: options((c) => c.gender),
+      affiliations: options((c) => c.affiliation),
       onResetSearch: onResetSearch,
       onApply: ({
         required String race,
@@ -439,20 +348,110 @@ class DragonBallHomeScreen extends HookConsumerWidget {
   }
 }
 
+/// Keeps content readable on wide screens (web, tablets).
+class _ContentWidth extends StatelessWidget {
+  const _ContentWidth({required this.child});
 
-class _CharacterTab extends StatelessWidget {
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: Breakpoints.maxContent),
+        child: child,
+      ),
+    );
+  }
+}
+
+/// Search field with a clear button. Shared by the Characters and Planets tabs.
+class _SearchField extends StatelessWidget {
+  const _SearchField({
+    required this.controller,
+    required this.focusNode,
+    required this.hint,
+    required this.clearTooltip,
+    required this.query,
+    required this.onChanged,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final String hint;
+  final String clearTooltip;
+  final String query;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      focusNode: focusNode,
+      onChanged: onChanged,
+      textInputAction: TextInputAction.search,
+      decoration: InputDecoration(
+        hintText: hint,
+        prefixIcon: const Icon(AppIcons.search),
+        suffixIcon: query.isEmpty
+            ? null
+            : IconButton(
+                tooltip: clearTooltip,
+                onPressed: () {
+                  controller.clear();
+                  onChanged('');
+                },
+                icon: const Icon(AppIcons.close),
+              ),
+      ),
+    );
+  }
+}
+
+void _openCharacterWithPath(
+  BuildContext context, {
+  required PathSource source,
+  required List<Character> list,
+  required int index,
+  required String Function(int id) heroTagFor,
+}) {
+  openCharacter(
+    context,
+    CharacterNavContext(
+      source: source,
+      siblingIds: [for (final c in list) c.id], // enables swipe prev / next
+      index: index,
+      heroTagFor: heroTagFor,
+    ),
+  );
+}
+
+void _openPlanet(BuildContext context, int planetId) {
+  FocusManager.instance.primaryFocus?.unfocus();
+
+  Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => PlanetDetailView(planetId: planetId),
+    ),
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Characters tab
+// -----------------------------------------------------------------------------
+class _CharacterTab extends ConsumerWidget {
   const _CharacterTab({
     required this.state,
     required this.isGridView,
     required this.searchController,
     required this.searchQuery,
     required this.scrollController,
+    required this.searchFocusNode,
     required this.onSearchChanged,
     required this.onOpenFilters,
     required this.onRetry,
     required this.onReset,
-    required this.searchFocusNode,
-    required this.sortOrder,
   });
 
   final DragonBallState state;
@@ -460,162 +459,155 @@ class _CharacterTab extends StatelessWidget {
   final TextEditingController searchController;
   final String searchQuery;
   final ScrollController scrollController;
+  final FocusNode searchFocusNode;
   final ValueChanged<String> onSearchChanged;
   final VoidCallback onOpenFilters;
   final Future<void> Function() onRetry;
   final VoidCallback onReset;
-  final FocusNode searchFocusNode;
-  final String sortOrder;
-
 
   @override
-  Widget build(BuildContext context) {
-  final displayedCharacters = [...state.characters];
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(stringsProvider);
+    final characters = ref.watch(sortedCharactersProvider);
 
-  switch (sortOrder) {
-    case 'name_asc':
-      displayedCharacters.sort(
-        (a, b) => a.name.toLowerCase().compareTo(
-              b.name.toLowerCase(),
-            ),
-      );
-      break;
-    case 'name_desc':
-      displayedCharacters.sort(
-        (a, b) => b.name.toLowerCase().compareTo(
-              a.name.toLowerCase(),
-            ),
-      );
-      break;
-  }
-
-    return Column(
-    children: [
-      if (state.isLoadingCharacters)
-        const LinearProgressIndicator(),      
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-        child: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: searchController,
-                focusNode: searchFocusNode,
-                onChanged: onSearchChanged,
-                decoration: InputDecoration(
-                  hintText: 'Search warriors...',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: searchQuery.isEmpty
-                      ? null
-                      : IconButton(
-                          tooltip: 'Clear search',
-                          onPressed: () {
-                            searchController.clear();
-                            onSearchChanged('');
-                          },
-                          icon: const Icon(Icons.close),
-                        ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Badge(
-              isLabelVisible: state.hasActiveCharacterFilters,
-              child: IconButton.filledTonal(
-                tooltip: 'Filter characters',
-                onPressed: onOpenFilters,
-                icon: const Icon(Icons.tune),
-              ),
-            ),
-            if (searchQuery.isNotEmpty ||
-                state.hasActiveCharacterFilters) ...[
-              const SizedBox(width: 4),
-              IconButton(
-                tooltip: 'Clear filters',
-                onPressed: onReset,
-                icon: const Icon(Icons.filter_alt_off),
-              ),
-            ],
-          ],
-        ),
+    // Unfiltered emptiness: an active filter with no match is NOT an error.
+    final hasCatalogData = ref.watch(
+      catalogProvider.select(
+        (a) => a.asData?.value.characters.items.isNotEmpty ?? false,
       ),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              if (state.isLoadingCharacters && state.characters.isEmpty) {
-                return CatalogSkeleton(
-                  isGridView: isGridView,
-                  columns: _gridColumns(constraints.maxWidth),
-                  gridAspectRatio: 0.66,
-                );
-              }
+    );
 
-              if (state.characterError != null &&
-                  state.characters.isEmpty) {
-                return _InlineError(
-                  message: state.characterError!,
-                  onRetry: onRetry,
-                );
-              }
+    return _ContentWidth(
+      child: Column(
+        children: [
+          if (state.isLoadingCharacters) const LinearProgressIndicator(),
+          const CatalogStatusBanner(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpace.x4,
+              AppSpace.x3,
+              AppSpace.x4,
+              AppSpace.x2,
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _SearchField(
+                    controller: searchController,
+                    focusNode: searchFocusNode,
+                    hint: s.searchHint,
+                    clearTooltip: s.clearSearch,
+                    query: searchQuery,
+                    onChanged: onSearchChanged,
+                  ),
+                ),
+                const SizedBox(width: AppSpace.x2),
+                Badge(
+                  isLabelVisible: state.hasActiveCharacterFilters,
+                  child: IconButton.filledTonal(
+                    tooltip: s.filterTooltip,
+                    onPressed: onOpenFilters,
+                    icon: const Icon(AppIcons.filter),
+                  ),
+                ),
+                if (searchQuery.isNotEmpty || state.hasActiveCharacterFilters)
+                  IconButton(
+                    tooltip: s.clearFiltersTooltip,
+                    onPressed: onReset,
+                    icon: const Icon(AppIcons.filterClear),
+                  ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final columns = Breakpoints.gridColumns(constraints.maxWidth);
+                final extent = gridCardExtent(context);
 
-              if (state.characters.isEmpty) {
-                return _EmptyView(
-                  icon: Icons.person_search,
-                  title: 'No warriors found',
-                  subtitle: 'Try another search or clear your filters.',
-                  onAction: onReset,
-                  actionLabel: 'Reset',
-                );
-              }
-
-              final columns = _gridColumns(constraints.maxWidth);
-
-              
-            return CatalogResults<Character>(
-                    items: displayedCharacters,
+                if (state.isLoadingCharacters && !hasCatalogData) {
+                  return CatalogSkeleton(
                     isGridView: isGridView,
                     columns: columns,
-                    gridAspectRatio: 0.66,
-                    controller: scrollController,
-                    isLoadingMore: state.isLoadingMoreCharacters,
-                    onRefresh: onRetry,
-                    itemBuilder: (context, character) {
-                      final key = ValueKey<int>(character.id);
+                    mainAxisExtent: extent,
+                  );
+                }
 
-                      return isGridView
-                          ? _CharacterTile(
-                              key: key,
-                              character: character,
-                            )
-                          : _CharacterListTile(
-                              key: key,
-                              character: character,
-                            );
-                    },
-            );
+                if (!hasCatalogData && state.characterError != null) {
+                  return MessageBlock(
+                    icon: AppIcons.offline,
+                    title: s.loadFailed,
+                    message: state.characterError,
+                    actionLabel: s.retry,
+                    onAction: () => onRetry(),
+                  );
+                }
 
-            },
+                if (characters.isEmpty) {
+                  return MessageBlock(
+                    icon: AppIcons.empty,
+                    title: s.noResultsTitle,
+                    message: s.noResultsBody,
+                    actionLabel: s.resetFilters,
+                    onAction: onReset,
+                  );
+                }
+
+                return CatalogResults<Character>(
+                  items: characters,
+                  isGridView: isGridView,
+                  columns: columns,
+                  gridMainAxisExtent: extent,
+                  controller: scrollController,
+                  onRefresh: onRetry,
+                  itemBuilder: (context, character, index) {
+                    void open() => _openCharacterWithPath(
+                          context,
+                          source: const FromAll(),
+                          list: characters,
+                          index: index,
+                          heroTagFor: characterHeroTag,
+                        );
+
+                    return isGridView
+                        ? CharacterGridCard(
+                            key: ValueKey<int>(character.id),
+                            character: character,
+                            heroTag: characterHeroTag(character.id),
+                            onTap: open,
+                          )
+                        : CharacterRow(
+                            key: ValueKey<int>(character.id),
+                            character: character,
+                            heroTag: characterHeroTag(character.id),
+                            onTap: open,
+                          );
+                  },
+                );
+              },
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
 
-
-class _PlanetTab extends StatelessWidget {
+// -----------------------------------------------------------------------------
+// Planets tab
+// -----------------------------------------------------------------------------
+class _PlanetTab extends ConsumerWidget {
   const _PlanetTab({
     required this.state,
     required this.isGridView,
     required this.searchController,
     required this.searchQuery,
     required this.scrollController,
+    required this.searchFocusNode,
     required this.onSearchChanged,
     required this.onDestroyedChanged,
     required this.onRetry,
     required this.onReset,
-    required this.searchFocusNode,
-    required this.sortOrder,
   });
 
   final DragonBallState state;
@@ -623,891 +615,264 @@ class _PlanetTab extends StatelessWidget {
   final TextEditingController searchController;
   final String searchQuery;
   final ScrollController scrollController;
+  final FocusNode searchFocusNode;
   final ValueChanged<String> onSearchChanged;
   final ValueChanged<bool?> onDestroyedChanged;
   final Future<void> Function() onRetry;
   final VoidCallback onReset;
-  final FocusNode searchFocusNode;
-  final String sortOrder;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(stringsProvider);
+    final planets = ref.watch(sortedPlanetsProvider);
 
-  final displayedPlanets = [...state.planets];
+    final hasCatalogData = ref.watch(
+      catalogProvider.select(
+        (a) => a.asData?.value.planets.items.isNotEmpty ?? false,
+      ),
+    );
 
-  switch (sortOrder) {
-    case 'name_asc':
-      displayedPlanets.sort(
-        (a, b) => a.name.toLowerCase().compareTo(
-              b.name.toLowerCase(),
+    return _ContentWidth(
+      child: Column(
+        children: [
+          if (state.isLoadingPlanets) const LinearProgressIndicator(),
+          const CatalogStatusBanner(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpace.x4,
+              AppSpace.x3,
+              AppSpace.x4,
+              AppSpace.x2,
             ),
-      );
-      break;
-    case 'name_desc':
-      displayedPlanets.sort(
-        (a, b) => b.name.toLowerCase().compareTo(
-              a.name.toLowerCase(),
-            ),
-      );
-      break;
-  }
-
-    return Column(
-      children: [
-        if (state.isLoadingPlanets)
-          const LinearProgressIndicator(),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: searchController,
-                  focusNode: searchFocusNode,
-                  onChanged: onSearchChanged,
-                  decoration: InputDecoration(
-                    hintText: 'Search planets...',
-                    prefixIcon: const Icon(Icons.search),
-                    suffixIcon: searchQuery.isEmpty
-                        ? null
-                        : IconButton(
-                            tooltip: 'Clear search',
-                            onPressed: () {
-                              searchController.clear();
-                              onSearchChanged('');
-                            },
-                            icon: const Icon(Icons.close),
-                          ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _SearchField(
+                    controller: searchController,
+                    focusNode: searchFocusNode,
+                    hint: s.searchPlanetsHint,
+                    clearTooltip: s.clearSearch,
+                    query: searchQuery,
+                    onChanged: onSearchChanged,
                   ),
                 ),
-              ),
-              if (searchQuery.isNotEmpty ||
-                  state.hasActivePlanetFilters) ...[
-                const SizedBox(width: 8),
-                IconButton(
-                  tooltip: 'Clear filters',
-                  onPressed: onReset,
-                  icon: const Icon(Icons.filter_alt_off),
-                ),
+                if (searchQuery.isNotEmpty || state.hasActivePlanetFilters)
+                  IconButton(
+                    tooltip: s.clearFiltersTooltip,
+                    onPressed: onReset,
+                    icon: const Icon(AppIcons.filterClear),
+                  ),
               ],
-            ],
+            ),
           ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Wrap(
-            spacing: 8,
-            children: [
-              ChoiceChip(
-                label: const Text('All worlds'),
-                selected: state.isDestroyedFilter == null,
-                onSelected: (_) => onDestroyedChanged(null),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpace.x4),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Wrap(
+                spacing: AppSpace.x2,
+                children: [
+                  ChoiceChip(
+                    label: Text(s.allWorlds),
+                    selected: state.isDestroyedFilter == null,
+                    onSelected: (_) => onDestroyedChanged(null),
+                  ),
+                  ChoiceChip(
+                    label: Text(s.intact),
+                    selected: state.isDestroyedFilter == false,
+                    onSelected: (_) => onDestroyedChanged(false),
+                  ),
+                  ChoiceChip(
+                    label: Text(s.destroyed),
+                    selected: state.isDestroyedFilter == true,
+                    onSelected: (_) => onDestroyedChanged(true),
+                  ),
+                ],
               ),
-              ChoiceChip(
-                label: const Text('Intact'),
-                selected: state.isDestroyedFilter == false,
-                onSelected: (_) => onDestroyedChanged(false),
-              ),
-              ChoiceChip(
-                label: const Text('Destroyed'),
-                selected: state.isDestroyedFilter == true,
-                onSelected: (_) => onDestroyedChanged(true),
-              ),
-            ],
+            ),
           ),
-        ),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              if (state.isLoadingPlanets && state.planets.isEmpty) {
-                return CatalogSkeleton(
-                  isGridView: isGridView,
-                  columns: _gridColumns(constraints.maxWidth),
-                  gridAspectRatio: 0.78,
-                );
-              }
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final columns = Breakpoints.gridColumns(constraints.maxWidth);
+                final extent = gridCardExtent(context, base: 230);
 
-              if (state.planetError != null &&
-                  state.planets.isEmpty) {
-                return _InlineError(
-                  message: state.planetError!,
-                  onRetry: onRetry,
-                );
-              }
-
-              if (state.planets.isEmpty) {
-                return _EmptyView(
-                  icon: Icons.public_off,
-                  title: 'No planets found',
-                  subtitle: 'Try another search or clear your filters.',
-                  onAction: onReset,
-                  actionLabel: 'Reset',
-                );
-              }
-
-              final columns = _gridColumns(constraints.maxWidth);
-
-              
-            return CatalogResults<Planet>(
-                    items: displayedPlanets,
+                if (state.isLoadingPlanets && !hasCatalogData) {
+                  return CatalogSkeleton(
                     isGridView: isGridView,
                     columns: columns,
-                    gridAspectRatio: 0.78,
-                    controller: scrollController,
-                    isLoadingMore: state.isLoadingMorePlanets,
-                    onRefresh: onRetry,
-                    itemBuilder: (context, planet) {
-                      final key = ValueKey<int>(planet.id);
+                    mainAxisExtent: extent,
+                  );
+                }
 
-                      return isGridView
-                          ? _PlanetTile(
-                              key: key,
-                              planet: planet,
-                            )
-                          : _PlanetListTile(
-                              key: key,
-                              planet: planet,
-                            );
-                    },
-            );
+                if (!hasCatalogData && state.planetError != null) {
+                  return MessageBlock(
+                    icon: AppIcons.offline,
+                    title: s.planetsLoadFailed,
+                    message: state.planetError,
+                    actionLabel: s.retry,
+                    onAction: () => onRetry(),
+                  );
+                }
 
-            },
+                if (planets.isEmpty) {
+                  return MessageBlock(
+                    icon: AppIcons.planet,
+                    title: s.noPlanetsTitle,
+                    message: s.noResultsBody,
+                    actionLabel: s.resetFilters,
+                    onAction: onReset,
+                  );
+                }
+
+                return CatalogResults<Planet>(
+                  items: planets,
+                  isGridView: isGridView,
+                  columns: columns,
+                  gridMainAxisExtent: extent,
+                  controller: scrollController,
+                  onRefresh: onRetry,
+                  itemBuilder: (context, planet, index) {
+                    void open() => _openPlanet(context, planet.id);
+
+                    return isGridView
+                        ? PlanetGridCard(
+                            key: ValueKey<int>(planet.id),
+                            planet: planet,
+                            onTap: open,
+                          )
+                        : PlanetRow(
+                            key: ValueKey<int>(planet.id),
+                            planet: planet,
+                            onTap: open,
+                          );
+                  },
+                );
+              },
+            ),
           ),
-        ),
-      ],
-    );
-  }
-}
-
-
-class _CharacterTile extends StatelessWidget {
-  const _CharacterTile({
-      super.key,
-      required this.character,
-    });
-
-  final Character character;
-
-  @override
-  Widget build(BuildContext context) {
-
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () => openCharacterProfile(context, character.id),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Container(
-                    color: Theme.of(context)
-                        .colorScheme.surfaceContainer,
-                    padding: const EdgeInsets.all(8),
-                    child: Hero(
-                      tag: characterHeroTag(character.id),
-                      child: buildCharacterImage(
-                        character.imageUrl,
-                        fit: BoxFit.contain,
-                        placeholder: const Center(
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                        showLoadingIndicator: true,
-                        errorWidget: const Icon(Icons.person_outline, size: 42),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    top: 6,
-                    right: 6,
-                    child: FavoriteToggleButton(
-                      characterId: character.id,
-                      overlay: true,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    character.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${character.race} • ${character.gender}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.bolt,
-                        size: 16,
-                        color: Colors.orange,
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          character.ki,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.labelMedium,
-                        ),
-                      ),
-                      const Icon(
-                        Icons.arrow_forward_rounded,
-                        size: 16,
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }
 }
 
-
-class _CharacterListTile extends StatelessWidget {
-  const _CharacterListTile({
-    super.key,
-    required this.character,
-  });
-
-  final Character character;
-
-  @override
-  Widget build(BuildContext context) {
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      clipBehavior: Clip.antiAlias,
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 6,
-        ),
-        leading: SizedBox(
-          width: 64,
-          height: 76,
-          child: Hero(
-            tag: characterHeroTag(character.id),
-            child: buildCharacterImage(
-              character.imageUrl,
-              fit: BoxFit.contain,
-              placeholder: const Center(
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              showLoadingIndicator: true,
-              errorWidget: const Icon(Icons.person_outline, size: 42),
-            ),
-          ),
-        ),
-        title: Text(
-          character.name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text(
-            '${character.race} • ${character.gender}\nKi: ${character.ki}',
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-        isThreeLine: true,
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            FavoriteToggleButton(characterId: character.id),
-            const Icon(Icons.chevron_right),
-          ],
-        ),
-        onTap: () => openCharacterProfile(context, character.id),
-      ),
-    );
-  }
-}
-
-class _PlanetListTile extends StatelessWidget {
-  const _PlanetListTile({
-    super.key,
-    required this.planet,
-  });
-
-  final Planet planet;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      clipBehavior: Clip.antiAlias,
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 6,
-        ),
-        leading: SizedBox(
-          width: 64,
-          height: 64,
-          child: buildCharacterImage(
-            planet.imageUrl,
-            fit: BoxFit.contain,
-            errorWidget: const Icon(Icons.public_off),
-          ),
-        ),
-        title: Text(
-          planet.name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Row(
-          children: [
-            Icon(
-              planet.isDestroyed
-                  ? Icons.broken_image_outlined
-                  : Icons.check_circle_outline,
-              size: 16,
-              color: planet.isDestroyed
-                  ? colorScheme.error
-                  : Colors.green,
-            ),
-            const SizedBox(width: 6),
-            Text(planet.isDestroyed ? 'Destroyed' : 'Intact'),
-          ],
-        ),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: () {
-          FocusManager.instance.primaryFocus?.unfocus();
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => PlanetDetailView(
-                planetId: planet.id,
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-
-class _PlanetTile extends StatelessWidget {
-  const _PlanetTile({
-    super.key,
-    required this.planet,
-  });
-
-  final Planet planet;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () {
-          FocusManager.instance.primaryFocus?.unfocus();
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => PlanetDetailView(
-                planetId: planet.id,
-              ),
-            ),
-          );
-        },
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: Container(
-                color: colorScheme.surfaceContainer,
-                padding: const EdgeInsets.all(12),
-                child: buildCharacterImage(
-                  planet.imageUrl,
-                  fit: BoxFit.contain,
-                  placeholder: const Center(
-                    child: Icon(Icons.public, size: 36),
-                  ),
-                  errorWidget: const Center(
-                    child: Icon(Icons.public_off, size: 36),
-                  ),
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    planet.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Icon(
-                        planet.isDestroyed
-                            ? Icons.broken_image_outlined
-                            : Icons.check_circle_outline,
-                        size: 16,
-                        color: planet.isDestroyed
-                            ? colorScheme.error
-                            : Colors.green,
-                      ),
-                      const SizedBox(width: 5),
-                      Expanded(
-                        child: Text(
-                          planet.isDestroyed ? 'Destroyed' : 'Intact',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ),
-                      const Icon(Icons.chevron_right, size: 18),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-
-
+// -----------------------------------------------------------------------------
+// Favorites tab
+// -----------------------------------------------------------------------------
 class _FavoritesTab extends ConsumerWidget {
   const _FavoritesTab({
     required this.isGridView,
     required this.onBrowseCharacters,
-    required this.sortOrder,
   });
 
   final bool isGridView;
   final VoidCallback onBrowseCharacters;
-  final String sortOrder;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final favoriteIds = ref.watch(dragonBallFavoritesProvider);
-    final ids = favoriteIds.toList();
+    final s = ref.watch(stringsProvider);
+    final favorites = ref.watch(favoriteCharactersProvider);
+    final savedCount = ref.watch(
+      dragonBallFavoritesProvider.select((ids) => ids.length),
+    );
 
-    switch (sortOrder) {
-      case 'id_asc':
-        ids.sort();
-        break;
-      case 'id_desc':
-        ids.sort((a, b) => b.compareTo(a));
-        break;
-    }
+    // Saved ids the catalog does not know (yet).
+    final missing = savedCount - favorites.length;
 
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'Saved characters',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
+    Future<void> refresh() =>
+        ref.read(dragonBallControllerProvider.notifier).refresh();
+
+    return _ContentWidth(
+      child: Column(
+        children: [
+          const CatalogStatusBanner(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpace.x4,
+              AppSpace.x3,
+              AppSpace.x4,
+              AppSpace.x2,
             ),
-          ),
-        ),
-        Expanded(
-          child: ids.isEmpty
-            ? _EmptyView(
-                icon: Icons.favorite_border,
-                title: 'No favorites yet',
-                subtitle:
-                    'Tap the heart on a character card to save a warrior.',
-                onAction: onBrowseCharacters,
-                actionLabel: 'Browse characters',
-                actionIcon: Icons.people_outline,
-              )
-            : isGridView
-                ? LayoutBuilder(
-                    builder: (context, constraints) {
-                      final columns = _gridColumns(
-                        constraints.maxWidth,
-                      );
-
-                      return GridView.builder(
-                        padding: const EdgeInsets.all(12),
-                        itemCount: ids.length,
-                        gridDelegate:
-                            SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: columns,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                          childAspectRatio: 0.66,
-                        ),
-                        itemBuilder: (context, index) {
-                          return _FavoriteCharacterTile(
-                            characterId: ids[index],
-                          );
-                        },
-                      );
-                    },
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.all(12),
-                    itemCount: ids.length,
-                    itemBuilder: (context, index) {
-                      return _FavoriteCharacterListTile(
-                        characterId: ids[index],
-                      );
-                    },
-                  ),
-        ),
-      ],
-    );
-  }
-}
-
-
-
-class _FavoriteCharacterListTile extends ConsumerWidget {
-  const _FavoriteCharacterListTile({
-    required this.characterId,
-  });
-
-  final int characterId;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final profileAsync = ref.watch(
-      characterProfileProvider(characterId),
-    );
-
-    return profileAsync.when(
-      loading: () => Card(
-        margin: const EdgeInsets.only(bottom: 10),
-        child: const SizedBox(
-          height: 88,
-          child: Center(
-            child: LinearProgressIndicator(),
-          ),
-        ),
-      ),
-      error: (_, __) => Card(
-        margin: const EdgeInsets.only(bottom: 10),
-        child: ListTile(
-          leading: const Icon(Icons.cloud_off),
-          title: const Text('Unable to load character'),
-          trailing: FavoriteToggleButton(characterId: characterId),
-        ),
-      ),
-      data: (character) => Card(
-        margin: const EdgeInsets.only(bottom: 10),
-        child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 6,
-          ),
-          leading: SizedBox(
-            width: 64,
-            height: 64,
-            child: Hero(
-              tag: favoriteCharacterHeroTag(character.id),
-              child: buildCharacterImage(
-                character.imageUrl,
-                fit: BoxFit.contain,
-                placeholder: const Center(
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                showLoadingIndicator: true,
-                errorWidget: const Icon(Icons.person_outline, size: 42),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                s.savedCharacters,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
               ),
             ),
           ),
-          title: Text(
-            character.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          subtitle: Text(
-            '${character.race} • ${character.gender}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          trailing: FavoriteToggleButton(characterId: characterId),
-          onTap: () {
-            FocusManager.instance.primaryFocus?.unfocus();
-
-            Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => CharacterProfileView(
-                  characterId: characterId,
-                  fromFavorites: true,
+          if (missing > 0 && favorites.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpace.x4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  s.favoritesNotLoaded(missing),
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
-
- class _FavoriteCharacterTile extends ConsumerWidget {
-  const _FavoriteCharacterTile({required this.characterId});
-
-  final int characterId;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final profileAsync = ref.watch(
-      characterProfileProvider(characterId),
-    );
-
-    return profileAsync.when(
-      loading: () => const CatalogSkeletonCard(),
-      error: (_, __) => Card(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.cloud_off, size: 30),
-                const SizedBox(height: 8),
-                const Text('Unable to load character'),
-                TextButton(
-                  onPressed: () {
-                    ref.invalidate(
-                      characterProfileProvider(characterId),
-                    );
-                  },
-                  child: const Text('Retry'),
-                ),
-              ],
             ),
-          ),
-        ),
-      ),
-      data: (character) {
-        return Card(
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-          onTap: () {
-            FocusManager.instance.primaryFocus?.unfocus();
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                if (savedCount == 0) {
+                  return MessageBlock(
+                    icon: AppIcons.favorites,
+                    title: s.noFavoritesTitle,
+                    message: s.noFavoritesBody,
+                    actionLabel: s.browseCharacters,
+                    onAction: onBrowseCharacters,
+                  );
+                }
 
-            Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => CharacterProfileView(
-                  characterId: characterId,
-                  fromFavorites: true,
-                ),
-              ),
-            );
-          },
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: Container(
-                          color: Theme.of(context)
-                              .colorScheme.surfaceContainer,
-                          padding: const EdgeInsets.all(8),
-                          child: Hero(
-                            tag: favoriteCharacterHeroTag(character.id),
-                            child: buildCharacterImage(
-                              character.imageUrl,
-                              fit: BoxFit.contain,
-                              placeholder: const Center(
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                              showLoadingIndicator: true,
-                              errorWidget: const Icon(Icons.person_outline, size: 42),
-                            ),
+                // Saved favorites exist but the catalog has none of them yet.
+                if (favorites.isEmpty) {
+                  return MessageBlock(
+                    icon: AppIcons.offline,
+                    title: s.favoritesUnavailable,
+                    actionLabel: s.retry,
+                    onAction: () => refresh(),
+                  );
+                }
+
+                return CatalogResults<Character>(
+                  items: favorites,
+                  isGridView: isGridView,
+                  columns: Breakpoints.gridColumns(constraints.maxWidth),
+                  gridMainAxisExtent: gridCardExtent(context),
+                  onRefresh: refresh,
+                  itemBuilder: (context, character, index) {
+                    void open() => _openCharacterWithPath(
+                          context,
+                          source: const FromFavorites(),
+                          list: favorites,
+                          index: index,
+                          heroTagFor: favoriteCharacterHeroTag,
+                        );
+
+                    return isGridView
+                        ? CharacterGridCard(
+                            key: ValueKey<int>(character.id),
+                            character: character,
+                            heroTag: favoriteCharacterHeroTag(character.id),
+                            onTap: open,
                           )
-                        ),
-                      ),
-                      Positioned(
-                        top: 4,
-                        right: 4,
-                        child: FavoriteToggleButton(
-                          characterId: characterId,
-                          overlay: true,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Text(
-                    character.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-              ],
+                        : CharacterRow(
+                            key: ValueKey<int>(character.id),
+                            character: character,
+                            heroTag: favoriteCharacterHeroTag(character.id),
+                            onTap: open,
+                          );
+                  },
+                );
+              },
             ),
           ),
-        );
-      },
-    );
-  }
-}
-
-class _InlineError extends StatelessWidget {
-  const _InlineError({
-    required this.message,
-    required this.onRetry,
-  });
-
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.cloud_off, size: 44),
-            const SizedBox(height: 12),
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Try again'),
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }
-}
-
-class _FullErrorView extends StatelessWidget {
-  const _FullErrorView({
-    required this.message,
-    required this.onRetry,
-  });
-
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 48),
-            const SizedBox(height: 12),
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: onRetry,
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _EmptyView extends StatelessWidget {
-  const _EmptyView({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    this.onAction,
-    this.actionLabel = 'Reset',
-    this.actionIcon,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback? onAction;
-  final String actionLabel;
-  final IconData? actionIcon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 50, color: Colors.grey),
-            const SizedBox(height: 12),
-            Text(
-              title,
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              subtitle,
-              textAlign: TextAlign.center,
-            ),
-            if (onAction != null) ...[
-              const SizedBox(height: 12),
-              if (actionIcon != null)
-                FilledButton.icon(
-                  onPressed: onAction,
-                  icon: Icon(actionIcon),
-                  label: Text(actionLabel),
-                )
-              else
-                TextButton(
-                  onPressed: onAction,
-                  child: Text(actionLabel),
-                ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-
-int _gridColumns(double width) {
-  if (width < 600) return 2;
-  if (width < 900) return 3;
-  if (width < 1200) return 4;
-  return 5;
 }

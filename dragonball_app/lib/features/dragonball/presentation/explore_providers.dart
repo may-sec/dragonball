@@ -1,26 +1,27 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/errors/failure.dart';
 import '../../../core/l10n/app_strings.dart';
-import '../../../core/result/result.dart';
 import '../../../core/utils/ki_parser.dart';
 import '../../dragonball/models/dragonball_models.dart';
-import '../../dragonball/models/paginated_response.dart';
-import '../../dragonball/presentation/dragonball_notifier.dart';
+import 'catalog_provider.dart';
+import 'dragonball_core_providers.dart';
 
 // LEARN (Riverpod, the big idea of this file): ONE source of truth, then
 // small DERIVED providers on top of it.
 //
-//   allCharactersProvider      (network/cache, all 58 characters, loaded once)
+//   catalogProvider            (disk cache + background check, loaded once)
 //        |
-//        +--> exploreGroupsProvider   (race/affiliation chips + counts)
-//        +--> exploreVisibleProvider  (filtered + searched + sorted list)
-//             ^
+//        +--> allCharactersProvider   (just the characters, as AsyncValue)
+//                |
+//                +--> exploreGroupsProvider   (race/affiliation chips + counts)
+//                +--> exploreVisibleProvider  (filtered + searched + sorted)
+//                       ^
 //   exploreSelectionProvider (mode, group, query, sort chosen by the user)
 //
-// Groups come from the REAL data, so a new race added to the API appears as
-// a chip automatically. A hardcoded list can never get out of sync.
+// Before, this file had its OWN loader that fetched every page again and never
+// refreshed. Now the Characters tab and Explore read the same data, and a
+// refresh anywhere updates both.
 
 enum ExploreMode { all, race, affiliation }
 
@@ -35,49 +36,44 @@ extension ExploreModeLabel on ExploreMode {
 enum ExploreSort { nameAsc, nameDesc, kiDesc }
 
 // ---------------------------------------------------------------------------
-// 1) Load every character (all pages), with offline fallback
+// 1) Characters, derived from the shared catalog
 // ---------------------------------------------------------------------------
 
-final allCharactersProvider = FutureProvider<List<Character>>((ref) async {
-  final repo = ref.watch(dragonBallRepositoryProvider);
+// / Same shape the screens already use (AsyncValue<List<Character>>), so
+/// `.when`, `.hasValue` and `.asData` keep working.
+///
+/// Retry is NOT `ref.invalidate(allCharactersProvider)` any more: this provider
+/// only DERIVES data, so invalidating it would not fetch anything. Call
+/// `ref.read(catalogProvider.notifier).refresh()` instead.
+final allCharactersProvider = Provider<AsyncValue<List<Character>>>((ref) {
+  final catalog = ref.watch(catalogProvider);
 
-  // A Map keyed by id removes duplicates if pages overlap.
-  final byId = <int, Character>{};
-  Failure? lastFailure;
+  return catalog.when<AsyncValue<List<Character>>>(
+    loading: () => const AsyncLoading<List<Character>>(),
+    error: (error, stack) => AsyncError<List<Character>>(error, stack),
+    data: (snapshot) {
+      final section = snapshot.characters;
 
-  // The upper bound (50 pages) protects against an infinite loop if the API
-  // ever keeps answering hasNext = true.
-  for (var pageNumber = 1; pageNumber <= 50; pageNumber++) {
-    final result = await repo.fetchCharacters(page: pageNumber, limit: 10);
+      if (section.items.isNotEmpty) {
+        return AsyncData<List<Character>>(section.items);
+      }
 
-    Page<Character>? page;
-    switch (result) {
-      case Ok(:final value):
-        page = value;
-      case Err(:final failure):
-        lastFailure = failure;
-    }
+      // Nothing to show yet, and a check is running: still loading.
+      if (snapshot.isRefreshing) {
+        return const AsyncLoading<List<Character>>();
+      }
 
-    // Offline fallback: the repository already wrote every successful page
-    // to the JSON cache, so a failed request can be served from disk.
-    page ??= await repo.readCachedCharacters(page: pageNumber, limit: 10);
-
-    if (page == null) {
-      if (byId.isEmpty) {
-        throw DragonBallRequestException(
-          lastFailure ?? const UnknownFailure('No data is available.'),
+      final failure = section.failure;
+      if (failure != null) {
+        return AsyncError<List<Character>>(
+          DragonBallRequestException(failure),
+          StackTrace.current,
         );
       }
-      break; // keep the pages we already have
-    }
 
-    for (final character in page.items) {
-      byId[character.id] = character;
-    }
-    if (!page.hasNext) break;
-  }
-
-  return byId.values.toList(growable: false);
+      return const AsyncData<List<Character>>(<Character>[]);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -155,8 +151,8 @@ typedef GroupCount = ({String label, int count}); // a Dart 3 record
 
 /// Chips for the current mode: label + how many characters.
 final exploreGroupsProvider = Provider<List<GroupCount>>((ref) {
-  final all = ref.watch(allCharactersProvider).asData?.value ??
-      const <Character>[];
+  final all =
+      ref.watch(allCharactersProvider).asData?.value ?? const <Character>[];
   final mode = ref.watch(exploreSelectionProvider.select((s) => s.mode));
 
   if (mode == ExploreMode.all) return const [];
@@ -178,11 +174,10 @@ final exploreGroupsProvider = Provider<List<GroupCount>>((ref) {
 });
 
 /// The list shown on screen. Riverpod caches the result: sorting runs only
-/// when the data or the selection changes, NOT on every widget rebuild
-/// (the old home screen sorted inside build()).
+/// when the data or the selection changes, NOT on every widget rebuild.
 final exploreVisibleProvider = Provider<List<Character>>((ref) {
-  final all = ref.watch(allCharactersProvider).asData?.value ??
-      const <Character>[];
+  final all =
+      ref.watch(allCharactersProvider).asData?.value ?? const <Character>[];
   final sel = ref.watch(exploreSelectionProvider);
   final query = sel.query.trim().toLowerCase();
 

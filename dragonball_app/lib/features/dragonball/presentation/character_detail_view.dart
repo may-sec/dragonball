@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design/app_colors.dart';
 import '../../../core/design/app_icons.dart';
 import '../../../core/design/app_tokens.dart';
 import '../../../core/design/category_style.dart';
 import '../../../core/l10n/language_provider.dart';
+import '../../../core/platform/experience_policy.dart';
 import '../../../core/result/result.dart';
 import '../../../core/utils/ki_parser.dart';
 import '../../../core/utils/text_cleaners.dart';
@@ -13,10 +15,10 @@ import '../../../widgets/build_character_image.dart';
 import '../../../widgets/favorite_heart.dart';
 import '../../../widgets/image_preloader.dart';
 import '../../../widgets/ki_bar.dart';
+import '../../../widgets/motion_hero.dart';
 import '../../../widgets/shared_widgets.dart';
 import '../models/dragonball_models.dart';
-import 'catalog_components.dart'
-    show characterHeroTag, favoriteCharacterHeroTag;
+import 'catalog_components.dart' show characterHeroTag, favoriteCharacterHeroTag;
 import 'dragonball_notifier.dart';
 import 'full_screen_image_viewer.dart';
 import 'navigation_path.dart';
@@ -32,8 +34,11 @@ import 'planet_detail_view.dart';
 //    character data is provider state (characterProfileProvider.family).
 //  * Slivers: SliverAppBar + FlexibleSpaceBar gives a parallax hero image
 //    that stretches when you over-scroll.
-//  * Hero: the card image flies into the header image.
+//  * Hero: the card image flies into the header image (MotionHero skips the
+//    flight when the user asked for reduced motion).
 //  * Breadcrumb: built from the PathSource + the current character's name.
+//  * Text-scale safety: the transformation strip's height grows with the
+//    user's text size instead of being a fixed number.
 // =============================================================================
 class CharacterProfileView extends ConsumerStatefulWidget {
   const CharacterProfileView({
@@ -200,7 +205,9 @@ class _ProfileScrollState extends ConsumerState<_ProfileScroll> {
     // build. We still wait for the first frame because precacheImage needs a
     // fully mounted context.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || !ref.read(experiencePolicyProvider).preloadImages) {
+        return;
+      }
       final c = widget.character;
       preloadImageUrls(context, [
         c.imageUrl,
@@ -237,7 +244,10 @@ class _ProfileScrollState extends ConsumerState<_ProfileScroll> {
 
     final affiliation = styleForCategory(c.affiliation);
     final race = styleForCategory(c.race);
-    final tier = tierFor(powerOf(c.ki, c.maxKi));
+
+    // null when the ki values are unreadable ("Unknown"): no tier is shown
+    // instead of calling an unknown character a Civilian.
+    final tier = tierForKi(c.ki, c.maxKi);
 
     return CustomScrollView(
       // AlwaysScrollable so pull-to-refresh works even on short content.
@@ -272,7 +282,7 @@ class _ProfileScrollState extends ConsumerState<_ProfileScroll> {
                   label: '${c.name}, open full screen',
                   child: GestureDetector(
                     onTap: _openImage,
-                    child: Hero(
+                    child: MotionHero(
                       tag: widget.heroTag,
                       child: buildCharacterImage(
                         c.imageUrl,
@@ -331,11 +341,12 @@ class _ProfileScrollState extends ConsumerState<_ProfileScroll> {
                           Expanded(
                             child: Text(s.power, style: theme.textTheme.titleLarge),
                           ),
-                          InfoChip(
-                            label: s.tierName(tier),
-                            icon: AppIcons.ki,
-                            color: tierColor(tier),
-                          ),
+                          if (tier != null)
+                            InfoChip(
+                              label: s.tierName(tier),
+                              icon: AppIcons.ki,
+                              color: tierColor(tier),
+                            ),
                         ],
                       ),
                       const SizedBox(height: AppSpace.x4),
@@ -438,7 +449,8 @@ class _Stat extends StatelessWidget {
 }
 
 // LEARN (StatefulWidget + implicit animation): a tiny widget with ONE piece of
-// state. AnimatedSize animates the height change for free.
+// state. AnimatedSize animates the height change for free; its duration goes
+// through AppMotion.resolve so reduced motion makes the change instant.
 class _ExpandableText extends StatefulWidget {
   const _ExpandableText({
     required this.text,
@@ -465,7 +477,7 @@ class _ExpandableTextState extends State<_ExpandableText> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         AnimatedSize(
-          duration: AppMotion.base,
+          duration: AppMotion.resolve(context, AppMotion.base),
           curve: AppMotion.curve,
           alignment: Alignment.topCenter,
           child: Text(
@@ -515,7 +527,7 @@ class _OriginPlanetCard extends ConsumerWidget {
             child: InfoChip(
               label: planet.isDestroyed ? s.destroyed : s.intact,
               icon: planet.isDestroyed ? AppIcons.destroyed : AppIcons.globe,
-              color: planet.isDestroyed ? scheme.error : const Color(0xFF3FA66A),
+              color: planet.isDestroyed ? scheme.error : AppColors.of(context).intact,
               dense: true,
             ),
           ),
@@ -542,6 +554,11 @@ class _OriginPlanetCard extends ConsumerWidget {
 //     the notifier is more reliable than a "before pop" callback.
 // The selected card also gets a colored border and a slight scale, so you can
 // see which form is active.
+//
+// LEARN (text scale and fixed heights): the card needs room for a 2-line name
+// and a ki row, and BOTH grow with the user's text size. A fixed `height: 240`
+// either overflows or squeezes the image to nothing at large scales. The strip
+// height below is "room for the text at this scale + a constant image area".
 class _TransformationStrip extends StatefulWidget {
   const _TransformationStrip({
     required this.characterId,
@@ -562,6 +579,12 @@ class _TransformationStrip extends StatefulWidget {
 class _TransformationStripState extends State<_TransformationStrip> {
   static const double _itemWidth = 150;
   static const double _gap = AppSpace.x3;
+
+  // Image area + fixed chrome (accent bar, paddings) at text scale 1.
+  static const double _fixedHeight = 180;
+
+  // Height taken by the name (2 lines) and the ki row at text scale 1.
+  static const double _textHeightAtScale1 = 60;
 
   final ScrollController _scroll = ScrollController();
 
@@ -589,6 +612,13 @@ class _TransformationStripState extends State<_TransformationStrip> {
   }
 
   String _heroTag(int index) => 'form-${widget.characterId}-$index';
+
+  double _stripHeight(BuildContext context) {
+    final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+    final effective = textScale < 1 ? 1.0 : textScale;
+
+    return _fixedHeight + _textHeightAtScale1 * effective;
+  }
 
   // Runs every time the viewer changes page.
   void _followViewer() {
@@ -649,7 +679,7 @@ class _TransformationStripState extends State<_TransformationStrip> {
     ];
 
     return SizedBox(
-      height: 240,
+      height: _stripHeight(context),
       // Rebuilds only the strip when the selected form changes.
       child: ValueListenableBuilder<int>(
         valueListenable: _page,
@@ -670,7 +700,7 @@ class _TransformationStripState extends State<_TransformationStrip> {
 
               return AnimatedScale(
                 scale: isSelected ? 1.0 : 0.96,
-                duration: AppMotion.base,
+                duration: AppMotion.resolve(context, AppMotion.base),
                 curve: AppMotion.curve,
                 child: SizedBox(
                   width: _itemWidth,
@@ -693,7 +723,7 @@ class _TransformationStripState extends State<_TransformationStrip> {
                           Expanded(
                             child: Padding(
                               padding: const EdgeInsets.all(AppSpace.x2),
-                              child: Hero(
+                              child: MotionHero(
                                 tag: _heroTag(i),
                                 child: buildCharacterImage(
                                   t.imageUrl,

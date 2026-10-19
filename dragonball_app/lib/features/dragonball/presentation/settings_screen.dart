@@ -1,17 +1,42 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:cross_file/cross_file.dart';
+
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
-import 'language_section.dart';
+
+import '../../../core/design/app_icons.dart';
+import '../../../core/design/app_tokens.dart';
+import '../../../core/l10n/app_strings.dart';
+import '../../../core/l10n/language_provider.dart';
+import '../../../core/platform/experience_policy.dart';
 import '../data/json_response_cache.dart';
 import 'app_settings.dart';
 import 'dragonball_notifier.dart';
+import 'language_section.dart';
 
+// =============================================================================
+// SettingsScreen (migrated to the design system)
+//
+// LEARN (what changed and why):
+//  * Every label comes from AppStrings, so the language setting finally
+//    translates the screen that contains it.
+//  * Icons come from AppIcons, spacing from AppSpace.
+//  * The theme picker is a SegmentedButton<ThemeMode>: one control instead of
+//    three RadioListTiles. (RadioListTile's groupValue/onChanged pair is being
+//    replaced by RadioGroup in newer Flutter versions, so this also avoids a
+//    deprecation.)
+//  * flutter_cache_manager has no web support, so "clear image cache" skips it
+//    on web and only clears Flutter's own in-memory ImageCache there.
+//  * "Latest API status" now also says WHEN the server last confirmed the data
+//    (catalog.lastValidatedAt), which is what makes offline mode understandable.
+//  * Messages after an await read the strings through ref.read, and every
+//    setState / snackbar is guarded by `mounted`.
+// =============================================================================
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
@@ -20,10 +45,14 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  static const double _maxWidth = 720;
+
   late Future<JsonResponseCacheStats> _cacheStats;
   late Future<PackageInfo> _packageInfo;
 
   bool _working = false;
+
+  AppStrings get _s => ref.read(stringsProvider);
 
   @override
   void initState() {
@@ -54,11 +83,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
+  String _timeAgo(AppStrings s, DateTime at) {
+    final diff = DateTime.now().difference(at);
+
+    if (diff.isNegative || diff.inMinutes < 1) return s.justNow;
+    if (diff.inMinutes < 60) return s.minutesAgo(diff.inMinutes);
+    if (diff.inHours < 24) return s.hoursAgo(diff.inHours);
+
+    return s.daysAgo(diff.inDays);
+  }
+
   Future<bool> _confirm({
     required String title,
     required String message,
-    String action = 'Continue',
+    required String action,
   }) async {
+    final s = _s;
+
     return await showDialog<bool>(
           context: context,
           builder: (dialogContext) => AlertDialog(
@@ -66,13 +107,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             content: Text(message),
             actions: [
               TextButton(
-                onPressed: () =>
-                    Navigator.pop(dialogContext, false),
-                child: const Text('Cancel'),
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: Text(s.cancel),
               ),
               FilledButton(
-                onPressed: () =>
-                    Navigator.pop(dialogContext, true),
+                onPressed: () => Navigator.pop(dialogContext, true),
                 child: Text(action),
               ),
             ],
@@ -82,33 +121,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   void _showPrivacyPolicy() {
+    final s = _s;
+
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Privacy Policy'),
-        content: const SingleChildScrollView(
-          child: Text(
-            'Dragon Ball Universe does not require an account.\n\n'
-            'Local Storage\n'
-            'Favorites, preferences, and cached data may be '
-            'stored on your device.\n\n'
-            'Third-Party Services\n'
-            'Character and planet data are retrieved from '
-            'dragonball-api.com. Requests may be subject to '
-            'that service’s privacy practices.\n\n'
-            'Data Sharing\n'
-            'The app does not sell personal information.\n\n'
-            'Data Deletion\n'
-            'You can remove favorites and clear supported '
-            'caches through Settings. Uninstalling the app '
-            'may remove locally stored data.\n\n'
-            'This policy may be updated as the app changes.',
-          ),
-        ),
+        title: Text(s.privacyPolicy),
+        content: SingleChildScrollView(child: Text(s.privacyBody)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
+            child: Text(s.close),
           ),
         ],
       ),
@@ -116,12 +139,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _clearImageCache() async {
+    final s = _s;
+
     final confirmed = await _confirm(
-      title: 'Clear image cache?',
-      message:
-          'Cached images will be downloaded again when needed. '
-          'Favorites, settings, and JSON API cache will remain.',
-      action: 'Clear images',
+      title: s.clearImagesTitle,
+      message: s.clearImagesBody,
+      action: s.clearImagesAction,
     );
 
     if (!confirmed || !mounted) return;
@@ -129,29 +152,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     setState(() => _working = true);
 
     try {
-      await DefaultCacheManager().emptyCache();
+      // The disk image cache does not exist on web.
+      if (!kIsWeb) await DefaultCacheManager().emptyCache();
 
       final imageCache = PaintingBinding.instance.imageCache;
       imageCache.clear();
       imageCache.clearLiveImages();
 
-      if (mounted) {
-        _message('Image cache cleared.');
-      }
+      _message(s.imagesCleared);
     } catch (_) {
-      _message('Unable to completely clear the image cache.');
+      _message(s.imagesClearFailed);
     } finally {
       if (mounted) setState(() => _working = false);
     }
   }
 
   Future<void> _clearApiCache() async {
+    final s = _s;
+
     final confirmed = await _confirm(
-      title: 'Clear API cache?',
-      message:
-          'Cached character, planet, and detail responses will '
-          'be removed. Your favorites and image files will remain.',
-      action: 'Clear API cache',
+      title: s.clearApiTitle,
+      message: s.clearApiBody,
+      action: s.clearApiAction,
     );
 
     if (!confirmed || !mounted) return;
@@ -164,37 +186,35 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (!mounted) return;
 
       setState(_reloadCacheStats);
-      _message('JSON API cache cleared.');
+      _message(s.apiCleared);
     } catch (_) {
-      _message('Unable to clear the API cache.');
+      _message(s.apiClearFailed);
     } finally {
       if (mounted) setState(() => _working = false);
     }
   }
 
   Future<void> _clearFavorites() async {
+    final s = _s;
+
     final confirmed = await _confirm(
-      title: 'Remove all favorites?',
-      message:
-          'This permanently removes your saved favorite character '
-          'IDs from this device. This does not clear cached images.',
-      action: 'Remove all',
+      title: s.removeFavoritesTitle,
+      message: s.removeFavoritesBody,
+      action: s.removeFavoritesAction,
     );
 
     if (!confirmed || !mounted) return;
 
-    ref
-        .read(dragonBallFavoritesProvider.notifier)
-        .replaceAll(<int>{});
+    ref.read(dragonBallFavoritesProvider.notifier).replaceAll(<int>{});
 
-    _message('All favorites removed.');
+    _message(s.favoritesRemoved);
   }
 
   Future<void> _exportFavorites() async {
+    final s = _s;
+
     try {
-      final ids = ref
-          .read(dragonBallFavoritesProvider)
-          .toList();
+      final ids = ref.read(dragonBallFavoritesProvider).toList();
 
       final contents = jsonEncode({
         'schemaVersion': 1,
@@ -212,101 +232,96 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       await SharePlus.instance.share(
         ShareParams(
           files: [file],
-          text: 'Dragon Ball Universe favorites backup',
+          text: s.exportText,
           fileNameOverrides: ['dragonball-favorites.json'],
         ),
       );
     } catch (error) {
-      _message('Could not export favorites: $error');
+      _message(s.exportFailed('$error'));
     }
   }
 
-Future<void> _importFavorites() async {
-  try {
-    final files = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['json'],
-    );
+  Future<void> _importFavorites() async {
+    final s = _s;
 
-    // Your installed API returns a List<PlatformFile>.
-    if (files.isEmpty || !mounted) return;
+    try {
+      final files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
 
-    final selectedFile = files.first;
-    final fileBytes = await selectedFile.readAsBytes();
+      // Your installed API returns a List<PlatformFile>.
+      if (files.isEmpty || !mounted) return;
 
-    final dynamic decoded = jsonDecode(
-      utf8.decode(fileBytes),
-    );
+      final selectedFile = files.first;
+      final fileBytes = await selectedFile.readAsBytes();
 
-    if (decoded is! Map ||
-        decoded['schemaVersion'] != 1 ||
-        decoded['favoriteCharacterIds'] is! List) {
-      _message('This is not a supported favorites backup.');
-      return;
-    }
+      final dynamic decoded = jsonDecode(utf8.decode(fileBytes));
 
-    final rawIds = decoded['favoriteCharacterIds'] as List;
-    final ids = <int>{};
-
-    for (final rawId in rawIds) {
-      final int? id = rawId is int
-          ? rawId
-          : rawId is String
-              ? int.tryParse(rawId)
-              : null;
-
-      if (id == null || id <= 0) {
-        _message('The backup contains an invalid character ID.');
+      if (decoded is! Map ||
+          decoded['schemaVersion'] != 1 ||
+          decoded['favoriteCharacterIds'] is! List) {
+        _message(s.importInvalid);
         return;
       }
 
-      ids.add(id);
+      final rawIds = decoded['favoriteCharacterIds'] as List;
+      final ids = <int>{};
+
+      for (final rawId in rawIds) {
+        final int? id = rawId is int
+            ? rawId
+            : rawId is String
+                ? int.tryParse(rawId)
+                : null;
+
+        if (id == null || id <= 0) {
+          _message(s.importInvalidId);
+          return;
+        }
+
+        ids.add(id);
+      }
+
+      if (!mounted) return;
+
+      final confirmed = await _confirm(
+        title: s.importConfirmTitle,
+        message: s.importConfirmBody(ids.length),
+        action: s.importAction,
+      );
+
+      if (!confirmed || !mounted) return;
+
+      ref.read(dragonBallFavoritesProvider.notifier).replaceAll(ids);
+
+      _message(s.importDone);
+    } on FormatException {
+      _message(s.importBadJson);
+    } catch (error) {
+      _message(s.importFailed('$error'));
     }
-
-    final confirmed = await _confirm(
-      title: 'Import favorites?',
-      message:
-          'This will replace your current favorites with '
-          '${ids.length} character IDs from the selected backup.',
-      action: 'Import',
-    );
-
-    if (!confirmed || !mounted) return;
-
-    ref
-        .read(dragonBallFavoritesProvider.notifier)
-        .replaceAll(ids);
-
-    _message('Favorites imported successfully.');
-  } on FormatException {
-    _message('The selected file contains invalid JSON.');
-  } catch (error) {
-    _message('Could not import favorites: $error');
   }
-}
 
   Future<void> _resetSettings() async {
+    final s = _s;
+
     final confirmed = await _confirm(
-      title: 'Reset settings?',
-      message:
-          'Theme, layout, sorting, and accessibility preferences '
-          'will return to their defaults. Favorites and cached '
-          'data will not be deleted.',
-      action: 'Reset settings',
+      title: s.resetTitle,
+      message: s.resetBody,
+      action: s.resetAction,
     );
 
     if (!confirmed || !mounted) return;
 
     await ref.read(appSettingsProvider.notifier).resetPreferences();
 
-    if (mounted) {
-      _message('Settings restored to defaults.');
-    }
+    _message(s.resetDone);
   }
 
   Widget _sectionTitle(BuildContext context, String title) {
     return Padding(
-      padding: const EdgeInsets.only(top: 24, bottom: 8),
+      padding: const EdgeInsets.only(top: AppSpace.x6, bottom: AppSpace.x2),
       child: Text(
         title,
         style: Theme.of(context).textTheme.titleMedium?.copyWith(
@@ -331,434 +346,448 @@ Future<void> _importFavorites() async {
 
   @override
   Widget build(BuildContext context) {
+    final s = ref.watch(stringsProvider);
     final settings = ref.watch(appSettingsProvider);
-    final catalogAsync = ref.watch(dragonBallControllerProvider);
+    final notifier = ref.read(appSettingsProvider.notifier);
+    final catalog = ref.watch(dragonBallControllerProvider).asData?.value;
     final networkNotice = ref.watch(networkNoticeProvider);
     final imageCache = PaintingBinding.instance.imageCache;
     final scheme = Theme.of(context).colorScheme;
-
-    final catalog = catalogAsync.asData?.value;
+    final powerSaveSupported = ref.watch(powerSaveSupportedProvider);
+    final batterySaver = ref.watch(powerSaveProvider).asData?.value ?? false;
 
     final apiErrors = [
       if (catalog?.characterError != null)
-        'Characters: ${catalog!.characterError}',
-      if (catalog?.planetError != null)
-        'Planets: ${catalog!.planetError}',
+        s.charactersError(catalog!.characterError!),
+      if (catalog?.planetError != null) s.planetsError(catalog!.planetError!),
+    ];
+
+    final lastValidated = catalog?.lastValidatedAt;
+
+    final statusLines = [
+      if (apiErrors.isNotEmpty)
+        ...apiErrors
+      else
+        networkNotice ?? s.apiStatusOk,
+      lastValidated != null
+          ? s.lastChecked(_timeAgo(s, lastValidated))
+          : s.neverChecked,
     ];
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Settings'),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
-        children: [
-          // APPEARANCE
-          _sectionTitle(context, 'Appearance'),
-          _group([
-            RadioListTile<ThemeMode>(
-              value: ThemeMode.system,
-              groupValue: settings.themeMode,
-              secondary: const Icon(Icons.brightness_auto),
-              title: const Text('System default'),
-              subtitle: const Text('Follow device appearance'),
-              onChanged: (value) {
-                if (value != null) {
-                  ref
-                      .read(appSettingsProvider.notifier)
-                      .setThemeMode(value);
-                }
-              },
+      appBar: AppBar(title: Text(s.settingsTitle)),
+      body: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: _maxWidth),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpace.x4,
+              0,
+              AppSpace.x4,
+              AppSpace.x8,
             ),
-            RadioListTile<ThemeMode>(
-              value: ThemeMode.light,
-              groupValue: settings.themeMode,
-              secondary: const Icon(Icons.light_mode_outlined),
-              title: const Text('Light'),
-              onChanged: (value) {
-                if (value != null) {
-                  ref
-                      .read(appSettingsProvider.notifier)
-                      .setThemeMode(value);
-                }
-              },
-            ),
-            RadioListTile<ThemeMode>(
-              value: ThemeMode.dark,
-              groupValue: settings.themeMode,
-              secondary: const Icon(Icons.dark_mode_outlined),
-              title: const Text('Dark'),
-              onChanged: (value) {
-                if (value != null) {
-                  ref
-                      .read(appSettingsProvider.notifier)
-                      .setThemeMode(value);
-                }
-              },
-            ),
-            ListTile(
-              leading: Icon(Icons.palette_outlined, color: scheme.primary),
-              title: const Text('Accent color'),
-              subtitle: const Text('Customize the app highlight color'),
-              trailing: DropdownButton<String>(
-                value: settings.accentColor,
-                items: const [
-                  DropdownMenuItem(
-                    value: 'orange',
-                    child: Text('Orange'),
+            children: [
+              // ---------------------------------------------------- APPEARANCE
+              _sectionTitle(context, s.sectionAppearance),
+              _group([
+                ListTile(
+                  title: Text(s.themeTitle),
+                  subtitle: Padding(
+                    padding: const EdgeInsets.only(top: AppSpace.x2),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: SegmentedButton<ThemeMode>(
+                        showSelectedIcon: false,
+                        segments: [
+                          ButtonSegment(
+                            value: ThemeMode.system,
+                            icon: const Icon(AppIcons.themeSystem),
+                            label: Text(s.themeSystem),
+                          ),
+                          ButtonSegment(
+                            value: ThemeMode.light,
+                            icon: const Icon(AppIcons.themeLight),
+                            label: Text(s.themeLight),
+                          ),
+                          ButtonSegment(
+                            value: ThemeMode.dark,
+                            icon: const Icon(AppIcons.themeDark),
+                            label: Text(s.themeDark),
+                          ),
+                        ],
+                        selected: {settings.themeMode},
+                        onSelectionChanged: (selection) =>
+                            notifier.setThemeMode(selection.first),
+                      ),
+                    ),
                   ),
-                  DropdownMenuItem(
-                    value: 'blue',
-                    child: Text('Blue'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'green',
-                    child: Text('Green'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'purple',
-                    child: Text('Purple'),
-                  ),
-                ],
-                onChanged: (value) {
-                  if (value != null) {
-                    ref
-                        .read(appSettingsProvider.notifier)
-                        .setAccentColor(value);
-                  }
-                },
-              ),
-            ),
-            SwitchListTile(
-              secondary: const Icon(Icons.animation),
-              title: const Text('Animations'),
-              subtitle: const Text('Enable interface animations'),
-              value: settings.animationsEnabled,
-              onChanged: ref
-                  .read(appSettingsProvider.notifier)
-                  .setAnimationsEnabled,
-            ),
-          ]),
-
-          const LanguageSettingsSection(),
-          // BROWSING & DISPLAY
-          _sectionTitle(context, 'Browsing & display'),
-          _group([
-            SwitchListTile(
-              title: const Text('Characters grid'),
-              subtitle: const Text('Off displays a list instead'),
-              value: settings.charactersGridView,
-              onChanged: ref
-                  .read(appSettingsProvider.notifier)
-                  .setCharactersGridView,
-            ),
-            SwitchListTile(
-              title: const Text('Planets grid'),
-              subtitle: const Text('Off displays a list instead'),
-              value: settings.planetsGridView,
-              onChanged: ref
-                  .read(appSettingsProvider.notifier)
-                  .setPlanetsGridView,
-            ),
-            SwitchListTile(
-              title: const Text('Favorites grid'),
-              subtitle: const Text('Off displays a list instead'),
-              value: settings.favoritesGridView,
-              onChanged: ref
-                  .read(appSettingsProvider.notifier)
-                  .setFavoritesGridView,
-            ),
-            SwitchListTile(
-              secondary: const Icon(Icons.density_small),
-              title: const Text('Compact cards'),
-              subtitle: const Text('Use denser interface spacing'),
-              value: settings.compactCards,
-              onChanged: ref
-                  .read(appSettingsProvider.notifier)
-                  .setCompactCards,
-            ),
-            ListTile(
-              title: const Text('Catalog sorting'),
-              subtitle: const Text('Sort currently loaded results'),
-              trailing: DropdownButton<String>(
-                value: settings.catalogSortOrder,
-                items: const [
-                  DropdownMenuItem(
-                    value: 'default',
-                    child: Text('Default'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'name_asc',
-                    child: Text('A–Z'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'name_desc',
-                    child: Text('Z–A'),
-                  ),
-                ],
-                onChanged: (value) {
-                  if (value != null) {
-                    ref
-                        .read(appSettingsProvider.notifier)
-                        .setCatalogSortOrder(value);
-                  }
-                },
-              ),
-            ),
-            ListTile(
-              title: const Text('Default starting tab'),
-              trailing: DropdownButton<int>(
-                value: settings.defaultTab,
-                items: const [
-                  DropdownMenuItem(value: 0, child: Text('Characters')),
-                  DropdownMenuItem(value: 1, child: Text('Explore')),
-                  DropdownMenuItem(value: 2, child: Text('Planets')),
-                  DropdownMenuItem(value: 3, child: Text('Favorites')),
-                ],
-                onChanged: (value) {
-                  if (value != null) {
-                    ref
-                        .read(appSettingsProvider.notifier)
-                        .setDefaultTab(value);
-                  }
-                },
-              ),
-            ),
-          ]),
-
-          // FAVORITES
-          _sectionTitle(context, 'Favorites'),
-          _group([
-            ListTile(
-              leading: const Icon(Icons.sort),
-              title: const Text('Sort favorites'),
-              trailing: DropdownButton<String>(
-                value: settings.favoritesSortOrder,
-                items: const [
-                  DropdownMenuItem(
-                    value: 'recent',
-                    child: Text('Recently added'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'id_asc',
-                    child: Text('ID ascending'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'id_desc',
-                    child: Text('ID descending'),
-                  ),
-                ],
-                onChanged: (value) {
-                  if (value != null) {
-                    ref
-                        .read(appSettingsProvider.notifier)
-                        .setFavoritesSortOrder(value);
-                  }
-                },
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.ios_share),
-              title: const Text('Export favorites'),
-              subtitle: const Text('Share a JSON backup'),
-              onTap: _exportFavorites,
-            ),
-            ListTile(
-              leading: const Icon(Icons.file_open_outlined),
-              title: const Text('Import favorites'),
-              subtitle: const Text('Restore from a JSON backup'),
-              onTap: _importFavorites,
-            ),
-            ListTile(
-              leading: Icon(Icons.delete_outline, color: scheme.error),
-              title: Text(
-                'Remove all favorites',
-                style: TextStyle(color: scheme.error),
-              ),
-              onTap: _clearFavorites,
-            ),
-          ]),
-
-          // STORAGE
-          _sectionTitle(context, 'Storage & data'),
-          _group([
-            ListTile(
-              leading: const Icon(Icons.memory),
-              title: const Text('In-memory image cache'),
-              subtitle: Text(
-                '${imageCache.currentSize} images · '
-                '${_formatBytes(imageCache.currentSizeBytes)}',
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.image_not_supported_outlined),
-              title: const Text('Clear image cache'),
-              subtitle: const Text('Remove cached and decoded images'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: _working ? null : _clearImageCache,
-            ),
-            FutureBuilder<JsonResponseCacheStats>(
-              future: _cacheStats,
-              builder: (context, snapshot) {
-                final stats = snapshot.data;
-
-                return ListTile(
-                  leading: const Icon(Icons.storage_outlined),
-                  title: const Text('JSON API cache'),
-                  subtitle: Text(
-                    snapshot.hasError
-                        ? 'Cache statistics unavailable'
-                        : stats == null
-                            ? 'Calculating cache size...'
-                            : '${stats.fileCount} files · '
-                                '${_formatBytes(stats.totalBytes)}',
-                  ),
-                  trailing: IconButton(
-                    tooltip: 'Refresh cache statistics',
-                    onPressed: () {
-                      setState(_reloadCacheStats);
+                ),
+                SwitchListTile(
+                  secondary: const Icon(AppIcons.themeDark),
+                  title: Text(s.trueBlack),
+                  subtitle: Text(s.trueBlackHint),
+                  value: settings.trueBlack,
+                  onChanged: notifier.setTrueBlack,
+                ),
+                ListTile(
+                  leading: Icon(AppIcons.palette, color: scheme.primary),
+                  title: Text(s.accentColor),
+                  subtitle: Text(s.accentHint),
+                  trailing: DropdownButton<String>(
+                    value: settings.accentColor,
+                    items: [
+                      DropdownMenuItem(
+                        value: 'orange',
+                        child: Text(s.accentOrange),
+                      ),
+                      DropdownMenuItem(
+                        value: 'blue',
+                        child: Text(s.accentBlue),
+                      ),
+                      DropdownMenuItem(
+                        value: 'green',
+                        child: Text(s.accentGreen),
+                      ),
+                      DropdownMenuItem(
+                        value: 'purple',
+                        child: Text(s.accentPurple),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) notifier.setAccentColor(value);
                     },
-                    icon: const Icon(Icons.refresh),
                   ),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_sweep_outlined),
-              title: const Text('Clear JSON API cache'),
-              subtitle: const Text('Remove cached API responses only'),
-              onTap: _working ? null : _clearApiCache,
-            ),
-          ]),
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              'Image cache, JSON API cache, favorites, and settings '
-              'are managed independently.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+                ),
+                SwitchListTile(
+                  secondary: const Icon(AppIcons.animation),
+                  title: Text(s.animations),
+                  subtitle: Text(s.animationsHint),
+                  value: settings.animationsEnabled,
+                  onChanged: notifier.setAnimationsEnabled,
+                ),
+              ]),
+
+              // ------------------------------------------------------ LANGUAGE
+              const LanguageSettingsSection(),
+
+              // ---------------------------------------- BROWSING & DISPLAY
+              _sectionTitle(context, s.sectionBrowsing),
+              _group([
+                SwitchListTile(
+                  secondary: const Icon(AppIcons.grid),
+                  title: Text(s.charactersGrid),
+                  subtitle: Text(s.gridHint),
+                  value: settings.charactersGridView,
+                  onChanged: notifier.setCharactersGridView,
+                ),
+                SwitchListTile(
+                  secondary: const Icon(AppIcons.planet),
+                  title: Text(s.planetsGrid),
+                  subtitle: Text(s.gridHint),
+                  value: settings.planetsGridView,
+                  onChanged: notifier.setPlanetsGridView,
+                ),
+                SwitchListTile(
+                  secondary: const Icon(AppIcons.favorites),
+                  title: Text(s.favoritesGrid),
+                  subtitle: Text(s.gridHint),
+                  value: settings.favoritesGridView,
+                  onChanged: notifier.setFavoritesGridView,
+                ),
+                SwitchListTile(
+                  secondary: const Icon(AppIcons.density),
+                  title: Text(s.compactCards),
+                  subtitle: Text(s.compactCardsHint),
+                  value: settings.compactCards,
+                  onChanged: notifier.setCompactCards,
+                ),
+                ListTile(
+                  leading: const Icon(AppIcons.sort),
+                  title: Text(s.catalogSorting),
+                  subtitle: Text(s.catalogSortingHint),
+                  trailing: DropdownButton<String>(
+                    value: settings.catalogSortOrder,
+                    items: [
+                      DropdownMenuItem(
+                        value: 'default',
+                        child: Text(s.sortDefault),
+                      ),
+                      DropdownMenuItem(
+                        value: 'name_asc',
+                        child: Text(s.sortAZ),
+                      ),
+                      DropdownMenuItem(
+                        value: 'name_desc',
+                        child: Text(s.sortZA),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) notifier.setCatalogSortOrder(value);
+                    },
+                  ),
+                ),
+                ListTile(
+                  title: Text(s.defaultTab),
+                  trailing: DropdownButton<int>(
+                    value: settings.defaultTab,
+                    items: [
+                      DropdownMenuItem(value: 0, child: Text(s.tabCharacters)),
+                      DropdownMenuItem(value: 1, child: Text(s.tabExplore)),
+                      DropdownMenuItem(value: 2, child: Text(s.tabPlanets)),
+                      DropdownMenuItem(value: 3, child: Text(s.tabFavorites)),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) notifier.setDefaultTab(value);
+                    },
+                  ),
+                ),
+              ]),
+
+              // ------------------------------------------------- FAVORITES
+              _sectionTitle(context, s.sectionFavorites),
+              _group([
+                ListTile(
+                  leading: const Icon(AppIcons.sort),
+                  title: Text(s.favoritesSort),
+                  trailing: DropdownButton<String>(
+                    value: settings.favoritesSortOrder,
+                    items: [
+                      DropdownMenuItem(
+                        value: 'recent',
+                        child: Text(s.sortRecent),
+                      ),
+                      DropdownMenuItem(
+                        value: 'id_asc',
+                        child: Text(s.sortIdAsc),
+                      ),
+                      DropdownMenuItem(
+                        value: 'id_desc',
+                        child: Text(s.sortIdDesc),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) notifier.setFavoritesSortOrder(value);
+                    },
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(AppIcons.share),
+                  title: Text(s.exportFavorites),
+                  subtitle: Text(s.exportHint),
+                  onTap: _exportFavorites,
+                ),
+                ListTile(
+                  leading: const Icon(AppIcons.importFile),
+                  title: Text(s.importFavorites),
+                  subtitle: Text(s.importHint),
+                  onTap: _importFavorites,
+                ),
+                ListTile(
+                  leading: Icon(AppIcons.delete, color: scheme.error),
+                  title: Text(
+                    s.removeAllFavorites,
+                    style: TextStyle(color: scheme.error),
+                  ),
+                  onTap: _clearFavorites,
+                ),
+              ]),
+
+              // --------------------------------------------------- STORAGE
+              _sectionTitle(context, s.sectionStorage),
+              _group([
+                ListTile(
+                  leading: const Icon(AppIcons.memory),
+                  title: Text(s.memoryImageCache),
+                  subtitle: Text(
+                    s.imagesCount(
+                      imageCache.currentSize,
+                      _formatBytes(imageCache.currentSizeBytes),
+                    ),
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(AppIcons.imageBroken),
+                  title: Text(s.clearImageCache),
+                  subtitle: Text(s.clearImageCacheHint),
+                  trailing: const Icon(AppIcons.caretRight),
+                  onTap: _working ? null : _clearImageCache,
+                ),
+                FutureBuilder<JsonResponseCacheStats>(
+                  future: _cacheStats,
+                  builder: (context, snapshot) {
+                    final stats = snapshot.data;
+
+                    return ListTile(
+                      leading: const Icon(AppIcons.storage),
+                      title: Text(s.apiCache),
+                      subtitle: Text(
+                        snapshot.hasError
+                            ? s.apiCacheUnavailable
+                            : stats == null
+                                ? s.apiCacheCalculating
+                                : s.apiCacheEntries(
+                                    stats.fileCount,
+                                    _formatBytes(stats.totalBytes),
+                                  ),
+                      ),
+                      trailing: IconButton(
+                        tooltip: s.refreshCacheStats,
+                        onPressed: () => setState(_reloadCacheStats),
+                        icon: const Icon(AppIcons.retry),
+                      ),
+                    );
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(AppIcons.delete),
+                  title: Text(s.clearApiCache),
+                  subtitle: Text(s.clearApiCacheHint),
+                  onTap: _working ? null : _clearApiCache,
+                ),
+              ]),
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpace.x2),
+                child: Text(
+                  s.storageNote,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+
+              // --------------------------------------------------- NETWORK
+              _sectionTitle(context, s.sectionNetwork),
+              _group([
+                ListTile(
+                  leading: Icon(
+                    apiErrors.isNotEmpty
+                        ? AppIcons.cloudOff
+                        : AppIcons.cloudOk,
+                    color: apiErrors.isNotEmpty ? scheme.error : scheme.primary,
+                  ),
+                  title: Text(s.apiStatus),
+                  subtitle: Text(statusLines.join('\n')),
+                ),
+                ListTile(
+                  leading: const Icon(AppIcons.retry),
+                  title: Text(s.checkForUpdates),
+                  subtitle: Text(s.checkForUpdatesHint),
+                  onTap: _working
+                      ? null
+                      : () {
+                          ref
+                              .read(dragonBallControllerProvider.notifier)
+                              .refresh();
+                          _message(s.refreshRequested);
+                        },
+                ),
+                if (networkNotice != null)
+                  ListTile(
+                    leading: const Icon(AppIcons.info),
+                    title: Text(s.dismissDiagnostic),
+                    onTap: () =>
+                        ref.read(networkNoticeProvider.notifier).clear(),
+                  ),
+              ]),
+
+              _sectionTitle(context, s.sectionPower),
+              _group([
+                SwitchListTile(
+                  secondary: const Icon(AppIcons.battery),
+                  title: Text(s.adaptPowerSaver),
+                  subtitle: Text(s.adaptPowerSaverHint),
+                  value: settings.adaptToPowerSaver,
+                  onChanged: notifier.setAdaptToPowerSaver,
+                ),
+                ListTile(
+                  leading: Icon(
+                    powerSaveSupported && batterySaver
+                        ? AppIcons.batterySaver
+                        : AppIcons.battery,
+                    color: powerSaveSupported && batterySaver
+                        ? scheme.primary
+                        : null,
+                  ),
+                  title: Text(
+                    !powerSaveSupported
+                        ? s.batterySaverUnknown
+                        : batterySaver
+                            ? s.batterySaverOn
+                            : s.batterySaverOff,
+                  ),
+                ),
+              ]),
+
+              // ---------------------------------------------- ACCESSIBILITY
+              _sectionTitle(context, s.sectionAccessibility),
+              _group([
+                ListTile(
+                  leading: const Icon(AppIcons.textSize),
+                  title: Text(s.textSize),
+                  subtitle: Text(s.textSizeHint),
+                  trailing: DropdownButton<double>(
+                    value: settings.textScale,
+                    items: [
+                      DropdownMenuItem(value: 0.9, child: Text(s.textSmall)),
+                      DropdownMenuItem(value: 1.0, child: Text(s.textDefault)),
+                      DropdownMenuItem(value: 1.15, child: Text(s.textLarge)),
+                      DropdownMenuItem(value: 1.3, child: Text(s.textLargest)),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) notifier.setTextScale(value);
+                    },
+                  ),
+                ),
+                SwitchListTile(
+                  secondary: const Icon(AppIcons.animation),
+                  title: Text(s.reducedMotion),
+                  subtitle: Text(s.reducedMotionHint),
+                  value: settings.reducedMotion,
+                  onChanged: notifier.setReducedMotion,
+                ),
+                SwitchListTile(
+                  secondary: const Icon(AppIcons.contrast),
+                  title: Text(s.highContrast),
+                  subtitle: Text(s.highContrastHint),
+                  value: settings.highContrast,
+                  onChanged: notifier.setHighContrast,
+                ),
+              ]),
+
+              // -------------------------------------------------------- ABOUT
+              _sectionTitle(context, s.sectionAbout),
+              _group([
+                FutureBuilder<PackageInfo>(
+                  future: _packageInfo,
+                  builder: (context, snapshot) {
+                    final info = snapshot.data;
+
+                    return ListTile(
+                      leading: const Icon(AppIcons.info),
+                      title: Text(s.appName),
+                      subtitle: Text(
+                        info == null
+                            ? s.versionLoading
+                            : s.versionLabel(info.version, info.buildNumber),
+                      ),
+                    );
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(AppIcons.privacy),
+                  title: Text(s.privacyPolicy),
+                  subtitle: Text(s.privacyHint),
+                  onTap: _showPrivacyPolicy,
+                ),
+                ListTile(
+                  leading: const Icon(AppIcons.reset),
+                  title: Text(s.resetSettings),
+                  subtitle: Text(s.resetSettingsHint),
+                  onTap: _resetSettings,
+                ),
+              ]),
+            ],
           ),
-
-          // NETWORK
-          _sectionTitle(context, 'Network & diagnostics'),
-          _group([
-            ListTile(
-              leading: Icon(
-                apiErrors.isNotEmpty
-                    ? Icons.cloud_off
-                    : Icons.cloud_done_outlined,
-                color: apiErrors.isNotEmpty ? scheme.error : scheme.primary,
-              ),
-              title: const Text('Latest API status'),
-              subtitle: Text(
-                apiErrors.isNotEmpty
-                    ? apiErrors.join('\n')
-                    : networkNotice ??
-                        'No recent API error is recorded.',
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.refresh),
-              title: const Text('Retry API requests'),
-              subtitle: const Text('Refresh characters and planets'),
-              onTap: _working
-                  ? null
-                  : () {
-                      ref
-                          .read(dragonBallControllerProvider.notifier)
-                          .refresh();
-                      _message('API refresh requested.');
-                    },
-            ),
-            if (networkNotice != null)
-              ListTile(
-                leading: const Icon(Icons.info_outline),
-                title: const Text('Dismiss diagnostic message'),
-                onTap: () {
-                  ref.read(networkNoticeProvider.notifier).clear();
-                },
-              ),
-          ]),
-
-          // ACCESSIBILITY
-          _sectionTitle(context, 'Accessibility'),
-          _group([
-            ListTile(
-              title: const Text('Text size'),
-              subtitle: const Text('Adjust app text size'),
-              trailing: DropdownButton<double>(
-                value: settings.textScale,
-                items: const [
-                  DropdownMenuItem(value: 0.9, child: Text('Small')),
-                  DropdownMenuItem(value: 1.0, child: Text('Default')),
-                  DropdownMenuItem(value: 1.15, child: Text('Large')),
-                  DropdownMenuItem(value: 1.3, child: Text('Largest')),
-                ],
-                onChanged: (value) {
-                  if (value != null) {
-                    ref
-                        .read(appSettingsProvider.notifier)
-                        .setTextScale(value);
-                  }
-                },
-              ),
-            ),
-            SwitchListTile(
-              secondary: const Icon(Icons.motion_photos_off_outlined),
-              title: const Text('Reduced motion'),
-              subtitle: const Text('Reduce motion where supported'),
-              value: settings.reducedMotion,
-              onChanged: ref
-                  .read(appSettingsProvider.notifier)
-                  .setReducedMotion,
-            ),
-            SwitchListTile(
-              secondary: const Icon(Icons.contrast),
-              title: const Text('Higher contrast'),
-              subtitle: const Text('Strengthen theme color contrast'),
-              value: settings.highContrast,
-              onChanged: ref
-                  .read(appSettingsProvider.notifier)
-                  .setHighContrast,
-            ),
-          ]),
-
-          // ABOUT
-          _sectionTitle(context, 'About'),
-          _group([
-            FutureBuilder<PackageInfo>(
-              future: _packageInfo,
-              builder: (context, snapshot) {
-                final info = snapshot.data;
-
-                return ListTile(
-                  leading: const Icon(Icons.info_outline),
-                  title: const Text('Dragon Ball Universe'),
-                  subtitle: Text(
-                    info == null
-                        ? 'Loading app version...'
-                        : 'Version ${info.version} '
-                            '(Build ${info.buildNumber})',
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.privacy_tip_outlined),
-              title: const Text('Privacy Policy'),
-              subtitle: const Text('How the app handles data'),
-              onTap: _showPrivacyPolicy,
-            ),
-            ListTile(
-              leading: const Icon(Icons.restart_alt),
-              title: const Text('Reset settings'),
-              subtitle: const Text(
-                'Restore defaults without deleting favorites',
-              ),
-              onTap: _resetSettings,
-            ),
-          ]),
-        ],
+        ),
       ),
     );
   }

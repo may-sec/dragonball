@@ -7,6 +7,7 @@ import '../features/dragonball/models/dragonball_models.dart';
 import 'build_character_image.dart';
 import 'favorite_heart.dart';
 import 'ki_bar.dart';
+import 'motion_hero.dart';
 import 'shared_widgets.dart';
 
 /// Hero tags must be UNIQUE per screen and IDENTICAL on both ends of the
@@ -34,7 +35,8 @@ class _CharacterImage extends StatelessWidget {
       ),
       child: Padding(
         padding: const EdgeInsets.all(AppSpace.x2),
-        child: Hero(
+        // MotionHero = Hero, except when the user asked for reduced motion.
+        child: MotionHero(
           tag: heroTag,
           child: buildCharacterImage(
             character.imageUrl,

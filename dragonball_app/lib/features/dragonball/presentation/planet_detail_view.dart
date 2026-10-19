@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design/app_colors.dart';
 import '../../../core/design/app_icons.dart';
 import '../../../core/design/app_tokens.dart';
 import '../../../core/design/category_style.dart';
@@ -8,19 +9,14 @@ import '../../../core/l10n/language_provider.dart';
 import '../../../core/result/result.dart';
 import '../../../core/utils/text_cleaners.dart';
 import '../../../widgets/build_character_image.dart';
+import '../../../widgets/planet_card.dart' show kGrayscaleFilter;
 import '../../../widgets/shared_widgets.dart';
 import 'dragonball_notifier.dart';
 import 'navigation_path.dart';
 
-// LEARN (ColorFilter): a destroyed planet is drawn in grayscale. A color
-// matrix multiplies [R G B A] rows; equal rows for R, G and B = gray.
-const ColorFilter _grayscale = ColorFilter.matrix(<double>[
-  0.2126, 0.7152, 0.0722, 0, 0,
-  0.2126, 0.7152, 0.0722, 0, 0,
-  0.2126, 0.7152, 0.0722, 0, 0,
-  0, 0, 0, 1, 0,
-]);
-
+// The grayscale ColorFilter for destroyed planets now lives in planet_card.dart
+// (kGrayscaleFilter), shared by the cards and this screen. The "intact" green
+// comes from the theme (AppColors), so it is right in every theme variant.
 class PlanetDetailView extends ConsumerWidget {
   const PlanetDetailView({super.key, required this.planetId});
 
@@ -31,6 +27,7 @@ class PlanetDetailView extends ConsumerWidget {
     final s = ref.watch(stringsProvider);
     final planetAsync = ref.watch(planetDetailProvider(planetId));
     final theme = Theme.of(context);
+    final appColors = AppColors.of(context);
 
     return Scaffold(
       appBar: AppBar(title: Text(s.planetDossier)),
@@ -45,7 +42,7 @@ class PlanetDetailView extends ConsumerWidget {
         ),
         data: (planet) {
           final statusColor =
-              planet.isDestroyed ? theme.colorScheme.error : const Color(0xFF3FA66A);
+              planet.isDestroyed ? theme.colorScheme.error : appColors.intact;
 
           Widget image = buildCharacterImage(
             planet.imageUrl,
@@ -54,7 +51,7 @@ class PlanetDetailView extends ConsumerWidget {
             errorWidget: const Icon(AppIcons.globe, size: 42),
           );
           if (planet.isDestroyed) {
-            image = ColorFiltered(colorFilter: _grayscale, child: image);
+            image = ColorFiltered(colorFilter: kGrayscaleFilter, child: image);
           }
 
           final residentIds = [for (final c in planet.characters) c.id];

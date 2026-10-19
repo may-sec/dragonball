@@ -1,106 +1,46 @@
 import 'package:flutter/material.dart';
-import 'package:hooks_riverpod/hooks_riverpod.dart';
 
-import 'character_detail_view.dart';
-import 'dragonball_notifier.dart';
+import '../../../core/design/app_tokens.dart';
 
-class ViewModeSelector extends StatelessWidget {
-  const ViewModeSelector({
-    super.key,
-    required this.isGridView,
-    required this.onChanged,
-  });
+// LEARN (what moved out of this file): it used to hold its OWN favorite button
+// (FavoriteToggleButton), its own view toggle and a navigation helper, all
+// duplicated elsewhere. Now there is ONE favorite widget (FavoriteHeart in
+// widgets/), ONE card per kind of item (widgets/character_card.dart,
+// widgets/planet_card.dart) and ONE way to open a character
+// (openCharacter + CharacterNavContext). What stays here is the generic
+// "scrolling results" machinery and the loading skeletons.
 
-  final bool isGridView;
-  final ValueChanged<bool> onChanged;
+/// Card height for grids. Text grows with the user's text-size setting, so a
+/// fixed aspect ratio would overflow; an extent that grows with the scale does
+/// not. Same idea Explore already used.
+double gridCardExtent(BuildContext context, {double base = 260}) {
+  final textScale = MediaQuery.textScalerOf(context).scale(1.0);
 
-  @override
-  Widget build(BuildContext context) {
-    return SegmentedButton<bool>(
-      showSelectedIcon: false,
-      segments: const [
-        ButtonSegment<bool>(
-          value: true,
-          icon: Icon(Icons.grid_view_rounded),
-          label: Text('Grid'),
-        ),
-        ButtonSegment<bool>(
-          value: false,
-          icon: Icon(Icons.view_list_rounded),
-          label: Text('List'),
-        ),
-      ],
-      selected: {isGridView},
-      onSelectionChanged: (selection) => onChanged(selection.first),
-    );
-  }
+  return base * (textScale < 1 ? 1.0 : textScale);
 }
 
-class FavoriteToggleButton extends ConsumerWidget {
-  const FavoriteToggleButton({
-    super.key,
-    required this.characterId,
-    this.overlay = false,
-  });
-
-  final int characterId;
-  final bool overlay;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final isFavorite = ref.watch(
-      dragonBallFavoritesProvider.select(
-        (ids) => ids.contains(characterId),
-      ),
-    );
-
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return IconButton(
-      visualDensity:
-          overlay ? VisualDensity.compact : VisualDensity.standard,
-      style: overlay
-          ? IconButton.styleFrom(
-              backgroundColor:
-                  colorScheme.surface.withValues(alpha: 0.9),
-              shape: const CircleBorder(),
-            )
-          : null,
-      tooltip: isFavorite ? 'Remove favorite' : 'Add favorite',
-      onPressed: () {
-        ref
-            .read(dragonBallFavoritesProvider.notifier)
-            .toggle(characterId);
-      },
-      icon: Icon(
-        isFavorite ? Icons.favorite : Icons.favorite_border,
-        color: isFavorite ? Colors.red : null,
-      ),
-    );
-  }
-}
-
+/// Pull-to-refresh + grid or list. The builder also receives the index, which
+/// is what lets a tapped card open the detail screen with its neighbours (for
+/// swiping) and a breadcrumb.
 class CatalogResults<T> extends StatelessWidget {
   const CatalogResults({
     super.key,
     required this.items,
     required this.isGridView,
     required this.columns,
-    required this.gridAspectRatio,
-    required this.controller,
-    required this.isLoadingMore,
+    required this.gridMainAxisExtent,
     required this.onRefresh,
     required this.itemBuilder,
+    this.controller,
   });
 
   final List<T> items;
   final bool isGridView;
   final int columns;
-  final double gridAspectRatio;
-  final ScrollController controller;
-  final bool isLoadingMore;
+  final double gridMainAxisExtent;
+  final ScrollController? controller;
   final Future<void> Function() onRefresh;
-  final Widget Function(BuildContext context, T item) itemBuilder;
+  final Widget Function(BuildContext context, T item, int index) itemBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -110,39 +50,32 @@ class CatalogResults<T> extends StatelessWidget {
           ? GridView.builder(
               controller: controller,
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(AppSpace.x3),
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: columns,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: gridAspectRatio,
+                crossAxisSpacing: AppSpace.x3,
+                mainAxisSpacing: AppSpace.x3,
+                mainAxisExtent: gridMainAxisExtent,
               ),
-              itemCount: items.length + (isLoadingMore ? columns : 0),
-              itemBuilder: (context, index) {
-                if (index >= items.length) {
-                  return const CatalogSkeletonCard();
-                }
-
-                return itemBuilder(context, items[index]);
-              },
+              itemCount: items.length,
+              itemBuilder: (context, index) =>
+                  itemBuilder(context, items[index], index),
             )
-          : ListView.builder(
+          : ListView.separated(
               controller: controller,
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(12),
-              itemCount: items.length + (isLoadingMore ? 1 : 0),
-              itemBuilder: (context, index) {
-                if (index >= items.length) {
-                  return const CatalogLoadingMore();
-                }
-
-                return itemBuilder(context, items[index]);
-              },
+              padding: const EdgeInsets.all(AppSpace.x3),
+              itemCount: items.length,
+              separatorBuilder: (_, __) => const SizedBox(height: AppSpace.x2),
+              itemBuilder: (context, index) =>
+                  itemBuilder(context, items[index], index),
             ),
     );
   }
 }
 
+/// Loading placeholder. Pass [mainAxisExtent] for the new fixed-extent grids;
+/// [gridAspectRatio] is kept so existing callers (Explore) still compile.
 class CatalogSkeleton extends StatelessWidget {
   const CatalogSkeleton({
     super.key,
@@ -150,33 +83,63 @@ class CatalogSkeleton extends StatelessWidget {
     required this.columns,
     this.itemCount = 6,
     this.gridAspectRatio = 0.72,
+    this.mainAxisExtent,
   });
 
   final bool isGridView;
   final int columns;
   final int itemCount;
   final double gridAspectRatio;
+  final double? mainAxisExtent;
 
   @override
   Widget build(BuildContext context) {
     if (!isGridView) {
-      return ListView.builder(
-        padding: const EdgeInsets.all(12),
+      return ListView.separated(
+        padding: const EdgeInsets.all(AppSpace.x3),
         itemCount: itemCount,
+        separatorBuilder: (_, __) => const SizedBox(height: AppSpace.x2),
         itemBuilder: (_, __) => const _SkeletonListItem(),
       );
     }
 
     return GridView.builder(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(AppSpace.x3),
       itemCount: columns * 3,
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: columns,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: gridAspectRatio,
-      ),
+      gridDelegate: mainAxisExtent != null
+          ? SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              crossAxisSpacing: AppSpace.x3,
+              mainAxisSpacing: AppSpace.x3,
+              mainAxisExtent: mainAxisExtent,
+            )
+          : SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              crossAxisSpacing: AppSpace.x3,
+              mainAxisSpacing: AppSpace.x3,
+              childAspectRatio: gridAspectRatio,
+            ),
       itemBuilder: (_, __) => const CatalogSkeletonCard(),
+    );
+  }
+}
+
+class _Bone extends StatelessWidget {
+  const _Bone({this.height, this.width, this.radius = AppRadius.sm});
+
+  final double? height;
+  final double? width;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: height,
+      width: width,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(radius),
+      ),
     );
   }
 }
@@ -186,61 +149,18 @@ class CatalogSkeletonCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = Theme.of(context).colorScheme.surfaceContainerHighest;
-
-    return Card(
-      clipBehavior: Clip.antiAlias,
+    return const Card(
       child: Padding(
-        padding: const EdgeInsets.all(10),
+        padding: EdgeInsets.all(AppSpace.x3),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              height: 14,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(5),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              height: 10,
-              width: 80,
-              decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(5),
-              ),
-            ),
-            const SizedBox(height: 12),
+            Expanded(child: _Bone(width: double.infinity, radius: AppRadius.md)),
+            SizedBox(height: AppSpace.x3),
+            _Bone(height: 14, width: double.infinity),
+            SizedBox(height: AppSpace.x2),
+            _Bone(height: 10, width: 80),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class CatalogLoadingMore extends StatelessWidget {
-  const CatalogLoadingMore({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.all(20),
-      child: Center(
-        child: SizedBox.square(
-          dimension: 22,
-          child: CircularProgressIndicator(strokeWidth: 2.5),
         ),
       ),
     );
@@ -252,44 +172,20 @@ class _SkeletonListItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = Theme.of(context).colorScheme.surfaceContainerHighest;
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
+    return const Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: EdgeInsets.all(AppSpace.x3),
         child: Row(
           children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            const SizedBox(width: 12),
+            _Bone(height: 64, width: 64, radius: AppRadius.md),
+            SizedBox(width: AppSpace.x3),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    height: 14,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: color,
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    height: 10,
-                    width: 120,
-                    decoration: BoxDecoration(
-                      color: color,
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                  ),
+                  _Bone(height: 14, width: double.infinity),
+                  SizedBox(height: AppSpace.x2),
+                  _Bone(height: 10, width: 120),
                 ],
               ),
             ),
@@ -300,18 +196,8 @@ class _SkeletonListItem extends StatelessWidget {
   }
 }
 
-void openCharacterProfile(BuildContext context, int characterId) {
-  FocusManager.instance.primaryFocus?.unfocus();
-
-  Navigator.of(context).push(
-    MaterialPageRoute<void>(
-      builder: (_) => CharacterProfileView(
-        characterId: characterId,
-      ),
-    ),
-  );
-}
-
+// Hero tags must be UNIQUE per screen (all tabs stay alive inside an
+// IndexedStack) and IDENTICAL on both ends of a flight.
 String characterHeroTag(int characterId) {
   return 'character-hero-$characterId';
 }

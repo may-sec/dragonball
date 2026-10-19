@@ -1,42 +1,17 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart' show debugPrint;
-import '../../../core/errors/failure.dart';
-import '../../../core/result/result.dart';
-import '../data/dragonball_repository.dart';
-import '../models/dragonball_models.dart';
-import '../models/paginated_response.dart';
-import 'dragonball_state.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../core/result/result.dart';
+import '../models/dragonball_models.dart';
+import 'catalog_provider.dart';
+import 'dragonball_core_providers.dart';
+import 'dragonball_state.dart';
 
-final networkNoticeProvider =
-    NotifierProvider<NetworkNoticeController, String?>(
-  NetworkNoticeController.new,
-);
-
-class NetworkNoticeController extends Notifier<String?> {
-  @override
-  String? build() => null;
-
-  void show(String message) {
-    state = message;
-  }
-
-  void clear() {
-    state = null;
-  }
-}
-
-
-final dragonBallRepositoryProvider =
-    Provider<DragonBallRepository>((ref) {
-  final client = http.Client();
-
-  ref.onDispose(client.close);
-
-  return DragonBallRepository(client);
-});
+// Existing files import networkNoticeProvider, dragonBallRepositoryProvider and
+// DragonBallRequestException from HERE. They now live in a smaller file, but
+// are re-exported so no other import has to change.
+export 'dragonball_core_providers.dart';
 
 final dragonBallControllerProvider =
     AsyncNotifierProvider<DragonBallController, DragonBallState>(
@@ -48,8 +23,8 @@ final dragonBallFavoritesProvider =
   DragonBallFavoritesController.new,
 );
 
-
-
+// NOTE (next step): profiles are still "cache forever". The same
+// stale-while-revalidate idea will be applied to them later.
 final characterProfileProvider =
     FutureProvider.family<CharacterProfile, int>((ref, id) async {
   final repository = ref.watch(dragonBallRepositoryProvider);
@@ -86,294 +61,134 @@ final planetDetailProvider =
   };
 });
 
-
-final class DragonBallRequestException implements Exception {
-  const DragonBallRequestException(this.failure);
-
-  final Failure failure;
-
-  @override
-  String toString() => failure.message;
-}
-
+// =============================================================================
+// DragonBallController
+//
+// LEARN (a notifier that is a VIEW of another provider):
+//  * The data is owned by catalogProvider. This controller only remembers the
+//    FILTERS (plain fields on the Notifier object, which survive rebuilds)
+//    and turns "catalog + filters" into the DragonBallState the home screen
+//    renders.
+//  * It uses ref.listen instead of ref.watch(catalogProvider.future): a watch
+//    would rebuild this notifier on every catalog change and flash the loading
+//    spinner over the whole home screen. listen just updates `state` quietly.
+//  * Public method names are unchanged, so the home screen, splash and
+//    settings compile as they are.
+// =============================================================================
 class DragonBallController extends AsyncNotifier<DragonBallState> {
-  int _characterRequestSequence = 0;
-  int _planetRequestSequence = 0;
+  String _searchName = '';
+  String _gender = 'ALL';
+  String _race = 'ALL';
+  String _affiliation = 'ALL';
 
-  
+  String _planetSearchName = '';
+  bool? _isDestroyed;
+
+  CatalogSnapshot? _snapshot;
+
   @override
   Future<DragonBallState> build() async {
-    final repository = ref.watch(dragonBallRepositoryProvider);
+    _snapshot = null;
 
-    final initialState = DragonBallState.initial();
+    ref.listen<AsyncValue<CatalogSnapshot>>(catalogProvider, (previous, next) {
+      final latest = next.asData?.value;
+      if (latest == null) return;
 
-    // Read both catalogues from disk before requesting the network.
-    final cachedResults = await Future.wait<Object?>([
-      repository.readCachedCharacters(page: 1, limit: 10),
-      repository.readCachedPlanets(page: 1, limit: 10),
-    ]);
+      _snapshot = latest;
 
-    final cachedCharacterPage =
-        cachedResults[0] as Page<Character>?;
-    final cachedPlanetPage = cachedResults[1] as Page<Planet>?;
+      // Before the first build finishes there is nothing to update yet:
+      // build() reads _snapshot itself.
+      if (state.hasValue) {
+        state = AsyncData(_compose(latest));
+      }
+    });
 
-    final hasCachedData =
-        cachedCharacterPage != null || cachedPlanetPage != null;
+    final first = await ref.read(catalogProvider.future);
 
-    if (hasCachedData) {
-      // Reserve request IDs now so later searches or refreshes can
-      // invalidate these background requests.
-      final characterSequence = ++_characterRequestSequence;
-      final planetSequence = ++_planetRequestSequence;
+    return _compose(_snapshot ?? first);
+  }
 
-      // Start the network refresh after returning the cached state.
-      Future<void>.delayed(Duration.zero, () async {
-        await Future.wait<void>([
-          if (characterSequence == _characterRequestSequence)
-            _runCharacterRequest(
-              sequence: characterSequence,
-              replace: true,
-              request: () => repository.fetchCharacters(
-                page: 1,
-                limit: 10,
-              ),
-            ),
-          if (planetSequence == _planetRequestSequence)
-            _runPlanetRequest(
-              sequence: planetSequence,
-              replace: true,
-              request: () => repository.fetchPlanets(
-                page: 1,
-                limit: 10,
-              ),
-            ),
-        ]);
-      });
+  DragonBallState _compose(CatalogSnapshot snapshot) {
+    final characters = filterCharacters(
+      snapshot.characters.items,
+      name: _searchName,
+      gender: _gender,
+      race: _race,
+      affiliation: _affiliation,
+    );
 
-      return initialState.copyWith(
-        characters: cachedCharacterPage?.items ?? const <Character>[],
-        characterCurrentPage: cachedCharacterPage?.currentPage ?? 1,
-        hasNextCharacters: cachedCharacterPage?.hasNext ?? false,
-        isLoadingCharacters: true,
-        characterError: null,
-        planets: cachedPlanetPage?.items ?? const <Planet>[],
-        planetCurrentPage: cachedPlanetPage?.currentPage ?? 1,
-        hasNextPlanets: cachedPlanetPage?.hasNext ?? false,
-        isLoadingPlanets: true,
-        planetError: null,
-      );
-    }
+    final planets = filterPlanets(
+      snapshot.planets.items,
+      name: _planetSearchName,
+      isDestroyed: _isDestroyed,
+    );
 
-    // First launch: no cached catalogue data exists, so fetch from
-    // the API before returning the initial state.
-    final results = await Future.wait<Object>([
-      repository.fetchCharacters(page: 1, limit: 10),
-      repository.fetchPlanets(page: 1, limit: 10),
-    ]);
-
-    final characterResult =
-        results[0] as Result<Page<Character>, Failure>;
-    final planetResult =
-        results[1] as Result<Page<Planet>, Failure>;
-
-    final characterPage = switch (characterResult) {
-      Ok(:final value) => value,
-      Err() => const Page<Character>.empty(),
-    };
-
-    final planetPage = switch (planetResult) {
-      Ok(:final value) => value,
-      Err() => const Page<Planet>.empty(),
-    };
-
-    
-
-    return initialState.copyWith(
-      characters: characterPage.items,
-      characterCurrentPage: characterPage.currentPage,
-      hasNextCharacters: characterPage.hasNext,
-      characterError: switch (characterResult) {
-        Ok() => null,
-        Err(:final failure) => failure.message,
-      },
-      planets: planetPage.items,
-      planetCurrentPage: planetPage.currentPage,
-      hasNextPlanets: planetPage.hasNext,
-      planetError: switch (planetResult) {
-        Ok() => null,
-        Err(:final failure) => failure.message,
-      },
+    return DragonBallState(
+      characters: characters,
+      characterCurrentPage: 1,
+      hasNextCharacters: false,
+      // "Loading" means "nothing to show yet". A background check on top of
+      // existing data is isRefreshing, so the splash never waits for it.
+      isLoadingCharacters:
+          snapshot.characters.isEmpty && snapshot.isRefreshing,
+      isLoadingMoreCharacters: false,
+      characterError: snapshot.characters.failure?.message,
+      searchName: _searchName,
+      selectedGender: _gender,
+      selectedRace: _race,
+      selectedAffiliation: _affiliation,
+      planets: planets,
+      planetCurrentPage: 1,
+      hasNextPlanets: false,
+      isLoadingPlanets: snapshot.planets.isEmpty && snapshot.isRefreshing,
+      isLoadingMorePlanets: false,
+      planetError: snapshot.planets.failure?.message,
+      planetSearchName: _planetSearchName,
+      isDestroyedFilter: _isDestroyed,
+      isRefreshing: snapshot.isRefreshing,
+      catalogIsComplete: snapshot.isComplete,
+      lastValidatedAt: snapshot.lastValidatedAt,
     );
   }
 
+  void _publish() {
+    final snapshot = _snapshot;
+    if (snapshot == null || !state.hasValue) return;
 
-  DragonBallState? get _current => state.asData?.value;
-
-  void _update(
-    DragonBallState Function(DragonBallState current) transform,
-  ) {
-    final current = _current;
-
-    if (current != null) {
-      state = AsyncData(transform(current));
-    }
+    state = AsyncData(_compose(snapshot));
   }
 
-
-  Future<void> _runCharacterRequest({
-    required int sequence,
-    required bool replace,
-    required Future<Result<Page<Character>, Failure>> Function() request,
-  }) async {
-    try {
-      final result = await request();
-
-      // Ignore outdated requests.
-      if (sequence != _characterRequestSequence) return;
-
-      _applyCharacterPage(
-        result,
-        replace: replace,
-      );
-    } catch (error) {
-      if (sequence != _characterRequestSequence) return;
-
-      // Notify the UI about unexpected failures.
-      ref.read(networkNoticeProvider.notifier).show(
-        'An unexpected error occurred: $error',
-      );
-
-      // Stop loading and preserve existing results.
-      _update(
-        (s) => s.copyWith(
-          isLoadingCharacters: false,
-          isLoadingMoreCharacters: false,
-          characterError: error.toString(),
-        ),
-      );
-    }
+  /// Checks the server now (Settings > "Retry API requests", pull to refresh).
+  Future<void> refresh() {
+    return ref.read(catalogProvider.notifier).refresh(force: true);
   }
 
-
-  Future<void> _runPlanetRequest({
-  required int sequence,
-  required bool replace,
-  required Future<Result<Page<Planet>, Failure>> Function() request,
-}) async {
-  try {
-    final result = await request();
-
-    // Only the latest planet request owns the current state.
-    if (sequence != _planetRequestSequence) return;
-
-    _applyPlanetPage(
-      result,
-      replace: replace,
-    );
-  } catch (error) {
-    if (sequence != _planetRequestSequence) return;
-
-    ref.read(networkNoticeProvider.notifier).show(
-      'An unexpected error occurred: $error',
-    );
-
-    _update(
-      (s) => s.copyWith(
-        isLoadingPlanets: false,
-        isLoadingMorePlanets: false,
-        planetError: error.toString(),
-      ),
-    );
-  }
-}
-
-
-  Future<void> refresh() async {
-    final current = _current;
-
-    if (current == null) {
-      ref.invalidateSelf();
-      return;
-    }
-
-    // A refresh supersedes any in-flight request for each catalogue.
-    final characterSequence = ++_characterRequestSequence;
-    final planetSequence = ++_planetRequestSequence;
-
-    _update(
-      (s) => s.copyWith(
-        isLoadingCharacters: true,
-        isLoadingPlanets: true,
-        isLoadingMoreCharacters: false,
-        isLoadingMorePlanets: false,
-        characterError: null,
-        planetError: null,
-      ),
-    );
-
-    await Future.wait<void>([
-      _runCharacterRequest(
-        sequence: characterSequence,
-        replace: true,
-        request: () => _repository.fetchCharacters(
-          page: 1,
-          limit: 10,
-          name: current.searchName,
-          gender: current.selectedGender,
-          race: current.selectedRace,
-          affiliation: current.selectedAffiliation,
-        ),
-      ),
-      _runPlanetRequest(
-        sequence: planetSequence,
-        replace: true,
-        request: () => _repository.fetchPlanets(
-          page: 1,
-          limit: 10,
-          name: current.planetSearchName,
-          isDestroyed: current.isDestroyedFilter,
-        ),
-      ),
-    ]);
-  }
-
+  /// Filters run locally: no request, instant, nothing to cancel or debounce.
+  ///
+  /// COMPATIBILITY: the current home screen calls this with NO arguments for
+  /// its "Try again" button and pull-to-refresh, so a call without arguments
+  /// means "check the server again". This goes away when the home screen is
+  /// migrated to call refresh() directly.
   Future<void> applyCharacterFilters({
     String? name,
     String? gender,
     String? race,
     String? affiliation,
   }) async {
-    final current = _current;
-    if (current == null) return;
+    final isReapply =
+        name == null && gender == null && race == null && affiliation == null;
 
-    final next = current.copyWith(
-      searchName: name ?? current.searchName,
-      selectedGender: gender ?? current.selectedGender,
-      selectedRace: race ?? current.selectedRace,
-      selectedAffiliation: affiliation ?? current.selectedAffiliation,
-      isLoadingCharacters: true,
-      isLoadingMoreCharacters: false,
-      characterError: null,
-    );
+    if (isReapply) {
+      await refresh();
+      return;
+    }
 
-    // Increment before starting the request. This invalidates older
-    // searches, refreshes, and pagination requests for characters.
-    final sequence = ++_characterRequestSequence;
+    _searchName = name ?? _searchName;
+    _gender = gender ?? _gender;
+    _race = race ?? _race;
+    _affiliation = affiliation ?? _affiliation;
 
-    _update((_) => next);
-
-    await _runCharacterRequest(
-      sequence: sequence,
-      replace: true,
-      request: () => _repository.fetchCharacters(
-        page: 1,
-        limit: 10,
-        name: next.searchName,
-        gender: next.selectedGender,
-        race: next.selectedRace,
-        affiliation: next.selectedAffiliation,
-      ),
-    );
+    _publish();
   }
 
   Future<void> applyPlanetFilters({
@@ -381,181 +196,47 @@ class DragonBallController extends AsyncNotifier<DragonBallState> {
     bool? isDestroyedFilter,
     bool clearDestroyedFilter = false,
   }) async {
-    final current = _current;
-    if (current == null) return;
+    final isReapply =
+        name == null && isDestroyedFilter == null && !clearDestroyedFilter;
 
-    final next = current.copyWith(
-      planetSearchName: name ?? current.planetSearchName,
-      isDestroyedFilter: clearDestroyedFilter
-          ? null
-          : (isDestroyedFilter ?? current.isDestroyedFilter),
-      isLoadingPlanets: true,
-      isLoadingMorePlanets: false,
-      planetError: null,
-    );
-
-    final sequence = ++_planetRequestSequence;
-
-    _update((_) => next);
-
-    await _runPlanetRequest(
-      sequence: sequence,
-      replace: true,
-      request: () => _repository.fetchPlanets(
-        page: 1,
-        limit: 10,
-        name: next.planetSearchName,
-        isDestroyed: next.isDestroyedFilter,
-      ),
-    );
-  }
-
-  void _applyCharacterPage(
-    Result<Page<Character>, Failure> result, {
-    required bool replace,
-  }) {
-    switch (result) {
-      case Ok(:final value):
-        _update(
-          (s) => s.copyWith(
-            characters: replace
-                ? value.items
-                : List.unmodifiable([...s.characters, ...value.items]),
-            characterCurrentPage: value.currentPage,
-            hasNextCharacters: value.hasNext,
-            isLoadingCharacters: false,
-            isLoadingMoreCharacters: false,
-            characterError: null,
-          ),
-        );
-
-      case Err(:final failure):
-        ref.read(networkNoticeProvider.notifier).show(failure.message);
-
-        _update(
-          (s) => s.copyWith(
-            isLoadingCharacters: false,
-            isLoadingMoreCharacters: false,
-            characterError: failure.message,
-          ),
-        );
-    }
-  }
-
-  void _applyPlanetPage(
-    Result<Page<Planet>, Failure> result, {
-    required bool replace,
-  }) {
-    switch (result) {
-      case Ok(:final value):
-        _update(
-          (s) => s.copyWith(
-            planets: replace
-                ? value.items
-                : List.unmodifiable([...s.planets, ...value.items]),
-            planetCurrentPage: value.currentPage,
-            hasNextPlanets: value.hasNext,
-            isLoadingPlanets: false,
-            isLoadingMorePlanets: false,
-            planetError: null,
-          ),
-        );
-
-      case Err(:final failure):
-        _update(
-          (s) => s.copyWith(
-            isLoadingPlanets: false,
-            isLoadingMorePlanets: false,
-            planetError: failure.message,
-          ),
-        );
-    }
-  }
-
-  Future<void> loadNextCharacters() async {
-    final current = _current;
-
-    if (current == null ||
-        !current.hasNextCharacters ||
-        current.isLoadingCharacters ||
-        current.isLoadingMoreCharacters) {
+    if (isReapply) {
+      await refresh();
       return;
     }
 
-    final sequence = ++_characterRequestSequence;
+    _planetSearchName = name ?? _planetSearchName;
 
-    _update(
-      (s) => s.copyWith(
-        isLoadingMoreCharacters: true,
-        characterError: null,
-      ),
-    );
-
-    await _runCharacterRequest(
-      sequence: sequence,
-      replace: false,
-      request: () => _repository.fetchCharacters(
-        page: current.characterCurrentPage + 1,
-        limit: 10,
-        name: current.searchName,
-        gender: current.selectedGender,
-        race: current.selectedRace,
-        affiliation: current.selectedAffiliation,
-      ),
-    );
-  }
-
-  Future<void> loadNextPlanets() async {
-    final current = _current;
-
-    if (current == null ||
-        !current.hasNextPlanets ||
-        current.isLoadingPlanets ||
-        current.isLoadingMorePlanets) {
-      return;
+    if (clearDestroyedFilter) {
+      _isDestroyed = null;
+    } else if (isDestroyedFilter != null) {
+      _isDestroyed = isDestroyedFilter;
     }
 
-    final sequence = ++_planetRequestSequence;
-
-    _update(
-      (s) => s.copyWith(
-        isLoadingMorePlanets: true,
-        planetError: null,
-      ),
-    );
-
-    await _runPlanetRequest(
-      sequence: sequence,
-      replace: false,
-      request: () => _repository.fetchPlanets(
-        page: current.planetCurrentPage + 1,
-        limit: 10,
-        name: current.planetSearchName,
-        isDestroyed: current.isDestroyedFilter,
-      ),
-    );
+    _publish();
   }
 
   void resetCharacterFilters() {
-    applyCharacterFilters(
-      name: '',
-      gender: 'ALL',
-      race: 'ALL',
-      affiliation: 'ALL',
-    );
+    _searchName = '';
+    _gender = 'ALL';
+    _race = 'ALL';
+    _affiliation = 'ALL';
+
+    _publish();
   }
 
   void resetPlanetFilters() {
-    applyPlanetFilters(
-      name: '',
-      clearDestroyedFilter: true,
-    );
+    _planetSearchName = '';
+    _isDestroyed = null;
+
+    _publish();
   }
 
-  DragonBallRepository get _repository =>
-      ref.read(dragonBallRepositoryProvider);
-}
+  // The whole catalogue is already loaded, so there is no "next page".
+  // Kept as no-ops because the home screen's scroll listener still calls them.
+  Future<void> loadNextCharacters() async {}
 
+  Future<void> loadNextPlanets() async {}
+}
 
 class DragonBallFavoritesController extends Notifier<Set<int>> {
   static const _storageKey = 'dragonball_favorite_character_ids';

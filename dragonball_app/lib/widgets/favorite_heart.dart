@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/design/app_colors.dart';
 import '../core/design/app_icons.dart';
 import '../core/design/app_tokens.dart';
 import '../core/l10n/language_provider.dart';
@@ -14,6 +15,8 @@ import '../features/dragonball/presentation/dragonball_notifier.dart';
 //  * TweenAnimationBuilder with a ValueKey: when the key changes, the tween
 //    restarts, so the heart "pops" (scale 0.6 -> 1.0 with an elastic curve)
 //    every time it is toggled.
+//  * The heart color is AppColors.favorite (a ThemeExtension), so it is the
+//    right red in light, dark AND true-black themes.
 class FavoriteHeart extends ConsumerWidget {
   const FavoriteHeart({
     super.key,
@@ -35,8 +38,6 @@ class FavoriteHeart extends ConsumerWidget {
       dragonBallFavoritesProvider.select((ids) => ids.contains(characterId)),
     );
 
-    final noMotion = MediaQuery.disableAnimationsOf(context);
-
     return IconButton(
       tooltip: isFavorite ? s.removeFavorite : s.addFavorite,
       visualDensity: overlay ? VisualDensity.compact : VisualDensity.standard,
@@ -53,13 +54,13 @@ class FavoriteHeart extends ConsumerWidget {
       icon: TweenAnimationBuilder<double>(
         key: ValueKey<bool>(isFavorite),
         tween: Tween<double>(begin: isFavorite ? 0.6 : 1.0, end: 1.0),
-        duration: noMotion ? Duration.zero : AppMotion.slow,
+        duration: AppMotion.resolve(context, AppMotion.slow),
         curve: Curves.elasticOut,
         builder: (context, scale, child) =>
             Transform.scale(scale: scale, child: child),
         child: Icon(
           isFavorite ? AppIcons.heartFill : AppIcons.heart,
-          color: isFavorite ? Colors.redAccent : null,
+          color: isFavorite ? AppColors.of(context).favorite : null,
         ),
       ),
     );
