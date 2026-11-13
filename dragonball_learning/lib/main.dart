@@ -1,7 +1,28 @@
+import 'package:dragonball_learning/models/character.dart';
+import 'package:dragonball_learning/services/dragon_ball_api.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+
+
 
 void main() {
   runApp(const DragonBallApp());
+  fetchCharacters();
+}
+
+Future<void> fetchCharacters() async{
+  final api = DragonBallApi();
+
+  try {
+    final response  = await api.fetchCharacters();
+    print('Status Code:${response.statusCode}');
+    print('Body:${response.body}');
+  }
+  catch(error) {
+    print('Something went wrong: ${error}');
+  }
 }
 
 class DragonBallApp extends StatelessWidget {
@@ -19,13 +40,13 @@ class DragonBallApp extends StatelessWidget {
 
 
 class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+  HomeScreen({super.key});
 
-  final List<Map<String,String>> characters = const [
-    {'name': 'Goku', 'race': 'Saiyan'},
-    {'name': 'Vegeta', 'race': 'Saiyan'},
-    {'name': 'Goten', 'race': 'Saiyan'},
-    {'name': 'Piccolo', 'race': 'Namekian'},
+  final List<Character> characters = [
+    Character(id:1, name: "Goku", race:"Saiyan", gender:"Male"),
+    Character(id:2, name: "Vegeta", race:"Saiyan", gender:"Male"),
+    Character(id:3, name: "Goten", race:"Saiyan", gender:"Male"),
+    Character(id:4, name: "Piccolo", race:"Namekian", gender:"Male"),
   ];
 
   @override
@@ -59,12 +80,12 @@ class HomeScreen extends StatelessWidget {
                 ),
                 Padding(
                   padding: EdgeInsets.all(12),
-                  child: Text(character['name']!,
+                  child: Text(character.name,
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                     ),
                   ),
                   const SizedBox(height: 4,),
-                  Text(character['race']!)
+                  Text(character.race)
               ],
 
             ),
